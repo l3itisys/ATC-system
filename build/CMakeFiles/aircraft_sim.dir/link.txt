@@ -1,1 +1,0 @@
-/usr/bin/c++ CMakeFiles/aircraft_sim.dir/src/sim/aircraft.cpp.o CMakeFiles/aircraft_sim.dir/src/sim/channel_manager.cpp.o -o aircraft_sim  -lpthread 

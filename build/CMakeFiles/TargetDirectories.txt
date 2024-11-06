@@ -1,8 +1,0 @@
-/home/tycia/Documents/Github/ATC-system/build/CMakeFiles/aircraft_sim.dir
-/home/tycia/Documents/Github/ATC-system/build/CMakeFiles/test.dir
-/home/tycia/Documents/Github/ATC-system/build/CMakeFiles/edit_cache.dir
-/home/tycia/Documents/Github/ATC-system/build/CMakeFiles/rebuild_cache.dir
-/home/tycia/Documents/Github/ATC-system/build/test/CMakeFiles/runTests.dir
-/home/tycia/Documents/Github/ATC-system/build/test/CMakeFiles/test.dir
-/home/tycia/Documents/Github/ATC-system/build/test/CMakeFiles/edit_cache.dir
-/home/tycia/Documents/Github/ATC-system/build/test/CMakeFiles/rebuild_cache.dir
