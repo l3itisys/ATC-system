@@ -17,7 +17,6 @@ struct ATCMessage {
     uint32_t sender_id;
     uint64_t timestamp;
     AircraftState state;  // For position updates
-    // Additional fields for commands if necessary
 };
 
 class ChannelManager {
