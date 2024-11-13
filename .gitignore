@@ -64,5 +64,9 @@ Thumbs.db
 temp/
 tmp/
 
-# Aider
-*.aider
+# Aider specific
+.aider*
+.aider.chat.history.md
+.aider.input.history
+.aider.tags.cache.v3/
+
