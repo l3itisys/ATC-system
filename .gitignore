@@ -1,0 +1,68 @@
+# Build directories
+build/
+bin/
+lib/
+out/
+shared_qnx/
+
+# QNX specific
+*.use
+*.o
+*.so
+*.a
+*.elf
+*.sym
+*.sys
+*.bootstrap
+*.tar.gz
+*.ses
+
+# IDE specific
+.vscode/
+.idea/
+*.swp
+*.swo
+CMakeLists.txt.user
+ide-7.1-workspace/
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake-build-*/
+*.cmake
+!CMakeLists.txt
+!qnx-toolchain.cmake
+
+# Compiled files
+*.exe
+*.out
+*.app
+*.i*86
+*.x86_64
+*.hex
+atc_system
+aircraft_sim
+
+# Debug files
+*.dSYM/
+*.su
+*.idb
+*.pdb
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Temporary files
+*.log
+*.tmp
+temp/
+tmp/
+
+# Aider
+*.aider
