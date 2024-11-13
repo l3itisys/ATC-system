@@ -1,3 +1,4 @@
+# CMakeLists.txt
 cmake_minimum_required(VERSION 3.10)
 project(ATCSystem)
 
@@ -5,22 +6,47 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 
 # Include directories
-include_directories(include)
+include_directories(${PROJECT_SOURCE_DIR}/include)
+include_directories(${QNX_TARGET}/usr/include)
 
-# Source files
-set(SRC_FILES
-    src/sim/aircraft.cpp
-    src/sim/channel_manager.cpp
-    # Add other source files here
+# Source files by component
+set(CORE_SOURCES
+    src/core/aircraft.cpp
 )
 
-# Executable
-add_executable(aircraft_sim ${SRC_FILES})
+set(COMMUNICATION_SOURCES
+    src/communication/qnx_channel.cpp
+)
+
+# Main executable
+add_executable(atc_system
+    ${CORE_SOURCES}
+    ${COMMUNICATION_SOURCES}
+    src/main.cpp
+)
 
 # Link libraries
-target_link_libraries(aircraft_sim pthread)
+if(NOT CMAKE_CROSSCOMPILING)
+    target_link_libraries(atc_system pthread rt)
+endif()
 
-# Tests
-enable_testing()
-add_subdirectory(test)
+# Testing
+if(NOT CMAKE_CROSSCOMPILING)
+    enable_testing()
 
+    # GTest dependency
+    find_package(GTest REQUIRED)
+    include_directories(${GTEST_INCLUDE_DIRS})
+
+    # Test executable
+    add_executable(run_tests
+        test/core/aircraft_test.cpp
+    )
+
+    target_link_libraries(run_tests
+        ${GTEST_LIBRARIES}
+        pthread
+    )
+
+    add_test(NAME CoreTests COMMAND run_tests)
+endif()
