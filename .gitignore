@@ -31,7 +31,7 @@ CMakeFiles/
 cmake-build-*/
 *.cmake
 !CMakeLists.txt
-!qnx-toolchain.cmake
+qnx-toolchain.cmake
 
 # Compiled files
 *.exe
