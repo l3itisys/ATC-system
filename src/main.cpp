@@ -10,27 +10,13 @@ int main() {
     try {
         std::cout << "Initializing ATC system..." << std::endl;
 
-        // Create and initialize the communication channel first
+        // Create and initialize the communication channel
         auto channel = std::make_shared<atc::comm::QnxChannel>("RADAR_CHANNEL");
         if (!channel->initialize()) {
             std::cerr << "Failed to initialize communication channel" << std::endl;
             return 1;
         }
-
         std::cout << "Communication channel initialized" << std::endl;
-
-        // Initialize flight characteristics
-        atc::FlightCharacteristics characteristics{
-            .model = "Boeing 737",
-            .type = atc::AircraftType::COMMERCIAL,
-            .cruise_speed = 400,
-            .max_speed = 500,
-            .min_speed = 200,
-            .max_altitude = 35000,
-            .min_altitude = 15000,
-            .max_climb_rate = 2000,
-            .max_descent_rate = 2500
-        };
 
         // Initialize position and velocity
         atc::Position initial_pos{50000, 50000, 20000};
@@ -39,8 +25,8 @@ int main() {
 
         std::cout << "Creating aircraft..." << std::endl;
 
-        // Create aircraft
-        atc::Aircraft aircraft("FLIGHT123", initial_pos, initial_vel, characteristics);
+        // Create aircraft with simplified constructor
+        atc::Aircraft aircraft("FLIGHT123", initial_pos, initial_vel);
 
         // Start the simulation
         std::cout << "Starting simulation..." << std::endl;
