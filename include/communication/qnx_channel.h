@@ -1,4 +1,3 @@
-// include/communication/qnx_channel.h
 #ifndef ATC_QNX_CHANNEL_H
 #define ATC_QNX_CHANNEL_H
 
