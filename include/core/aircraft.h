@@ -6,7 +6,7 @@
 #include "common/periodic_task.h"
 #include <memory>
 #include <mutex>
-#include <stdexcept>
+#include <string>
 
 namespace atc {
 
@@ -35,6 +35,10 @@ private:
     void updatePosition();
     bool validateSpeed(double speed) const;
     bool validateAltitude(double altitude) const;
+
+    // Logging methods
+    void logState(const std::string& event, const AircraftState& state);
+    std::string getStatusString(AircraftStatus status);
 
     AircraftState state_;
     mutable std::mutex state_mutex_;

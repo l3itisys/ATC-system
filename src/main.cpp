@@ -5,10 +5,16 @@
 #include <iostream>
 #include <thread>
 #include <memory>
+#include <vector>
+
+// Test scenario function declarations
+void runNormalFlightTest(atc::Aircraft& aircraft);
+void runBoundaryTest(atc::Aircraft& aircraft);
+void runEmergencyTest(atc::Aircraft& aircraft);
 
 int main() {
     try {
-        std::cout << "Initializing ATC system..." << std::endl;
+        std::cout << "=== ATC System Test Scenarios ===" << std::endl;
 
         // Create and initialize the communication channel
         auto channel = std::make_shared<atc::comm::QnxChannel>("RADAR_CHANNEL");
@@ -18,40 +24,100 @@ int main() {
         }
         std::cout << "Communication channel initialized" << std::endl;
 
-        // Initialize position and velocity
-        atc::Position initial_pos{50000, 50000, 20000};
-        atc::Velocity initial_vel;
-        initial_vel.setFromSpeedAndHeading(400, 90);  // 400 units/s, heading east
+        // Test Scenario 1: Normal Flight
+        std::cout << "\n=== Test Scenario 1: Normal Flight ===" << std::endl;
+        {
+            atc::Position pos{50000, 50000, 20000};
+            atc::Velocity vel;
+            vel.setFromSpeedAndHeading(400, 90);
+            atc::Aircraft aircraft("TEST001", pos, vel);
+            runNormalFlightTest(aircraft);
+        }
 
-        std::cout << "Creating aircraft..." << std::endl;
+        // Test Scenario 2: Boundary Test
+        std::cout << "\n=== Test Scenario 2: Boundary Test ===" << std::endl;
+        {
+            atc::Position pos{95000, 50000, 20000};  // Near X boundary
+            atc::Velocity vel;
+            vel.setFromSpeedAndHeading(400, 90);
+            atc::Aircraft aircraft("TEST002", pos, vel);
+            runBoundaryTest(aircraft);
+        }
 
-        // Create aircraft with simplified constructor
-        atc::Aircraft aircraft("FLIGHT123", initial_pos, initial_vel);
+        // Test Scenario 3: Emergency Handling
+        std::cout << "\n=== Test Scenario 3: Emergency Test ===" << std::endl;
+        {
+            atc::Position pos{50000, 50000, 20000};
+            atc::Velocity vel;
+            vel.setFromSpeedAndHeading(400, 90);
+            atc::Aircraft aircraft("TEST003", pos, vel);
+            runEmergencyTest(aircraft);
+        }
 
-        // Start the simulation
-        std::cout << "Starting simulation..." << std::endl;
-        aircraft.start();
-
-        // Let it run for a while
-        std::cout << "Running simulation for 10 seconds..." << std::endl;
-        std::this_thread::sleep_for(std::chrono::seconds(10));
-
-        // Change some parameters
-        std::cout << "Updating aircraft parameters..." << std::endl;
-        aircraft.updateSpeed(450);
-        aircraft.updateHeading(180);
-
-        // Run for a few more seconds
-        std::cout << "Running with new parameters for 5 seconds..." << std::endl;
-        std::this_thread::sleep_for(std::chrono::seconds(5));
-
-        // Stop simulation
-        std::cout << "Stopping simulation..." << std::endl;
-        aircraft.stop();
-
+        std::cout << "\n=== All test scenarios completed ===" << std::endl;
         return 0;
+
     } catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << std::endl;
         return 1;
     }
+}
+
+void runNormalFlightTest(atc::Aircraft& aircraft) {
+    // Start aircraft
+    aircraft.start();
+    std::cout << "Running normal flight test..." << std::endl;
+
+    // Let it fly straight for 5 seconds
+    std::this_thread::sleep_for(std::chrono::seconds(5));
+
+    // Test speed change
+    std::cout << "Testing speed change..." << std::endl;
+    aircraft.updateSpeed(450);
+    std::this_thread::sleep_for(std::chrono::seconds(3));
+
+    // Test heading change
+    std::cout << "Testing heading change..." << std::endl;
+    aircraft.updateHeading(180);
+    std::this_thread::sleep_for(std::chrono::seconds(3));
+
+    // Stop test
+    aircraft.stop();
+    std::cout << "Normal flight test completed" << std::endl;
+}
+
+void runBoundaryTest(atc::Aircraft& aircraft) {
+    // Start aircraft
+    aircraft.start();
+    std::cout << "Running boundary test..." << std::endl;
+
+    // Aircraft should approach boundary and trigger exit
+    std::this_thread::sleep_for(std::chrono::seconds(15));
+
+    // Stop test
+    aircraft.stop();
+    std::cout << "Boundary test completed" << std::endl;
+}
+
+void runEmergencyTest(atc::Aircraft& aircraft) {
+    // Start aircraft
+    aircraft.start();
+    std::cout << "Running emergency test..." << std::endl;
+
+    // Let it fly normally for a bit
+    std::this_thread::sleep_for(std::chrono::seconds(3));
+
+    // Declare emergency
+    std::cout << "Declaring emergency..." << std::endl;
+    aircraft.declareEmergency();
+    std::this_thread::sleep_for(std::chrono::seconds(3));
+
+    // Cancel emergency
+    std::cout << "Canceling emergency..." << std::endl;
+    aircraft.cancelEmergency();
+    std::this_thread::sleep_for(std::chrono::seconds(3));
+
+    // Stop test
+    aircraft.stop();
+    std::cout << "Emergency test completed" << std::endl;
 }
