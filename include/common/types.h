@@ -33,8 +33,8 @@ struct Velocity {
 
     void setFromSpeedAndHeading(double speed, double heading_deg) {
         double heading_rad = heading_deg * M_PI / 180.0;
-        vx = speed * std::cos(heading_rad);
-        vy = speed * std::sin(heading_rad);
+        vx = speed * std::cos(90.0 - heading_rad);
+        vy = speed * std::sin(90.0 - heading_rad);
     }
 };
 
