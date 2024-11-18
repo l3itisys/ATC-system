@@ -1,5 +1,6 @@
 #include "core/aircraft.h"
 #include "core/violation_detector.h"
+#include "display/display_system.h"
 #include "common/types.h"
 #include "common/constants.h"
 #include "communication/qnx_channel.h"
@@ -8,118 +9,243 @@
 #include <thread>
 #include <memory>
 #include <vector>
-#include <cmath>
+#include <fstream>
+#include <sstream>
+#include <csignal>
+#include <cstdlib>
+#include <atomic>
+#include <algorithm>
 
-void printSimulationHeader(double initial_separation) {
-    std::cout << "\n=========================================" << std::endl;
-    std::cout << "SIMULATION PARAMETERS" << std::endl;
-    std::cout << "=========================================" << std::endl;
-    std::cout << "Initial separation:     " << initial_separation << " units" << std::endl;
-    std::cout << "Combined closing speed: 800 units/s" << std::endl;
-    std::cout << "Minimum separation:     " << atc::constants::MIN_HORIZONTAL_SEPARATION
-              << " units" << std::endl;
-    std::cout << "Expected violation in:  "
-              << (initial_separation - atc::constants::MIN_HORIZONTAL_SEPARATION) / 800.0
-              << " seconds" << std::endl;
-    std::cout << "=========================================\n" << std::endl;
-}
+namespace {
+    std::atomic<bool> g_running{true};
 
-void printTimeStatus(int time, double separation) {
-    std::cout << "\n----------------------------------------" << std::endl;
-    std::cout << "TIME STATUS UPDATE" << std::endl;
-    std::cout << "----------------------------------------" << std::endl;
-    std::cout << "Time:        " << std::setw(2) << time << " seconds" << std::endl;
-    std::cout << "Separation:  " << std::fixed << std::setprecision(1)
-              << std::setw(8) << separation << " units" << std::endl;
-
-    if (separation > atc::constants::MIN_HORIZONTAL_SEPARATION) {
-        double time_to_min = (separation - atc::constants::MIN_HORIZONTAL_SEPARATION) / 800.0;
-        std::cout << "Status:      Safe - Minimum separation in "
-                  << std::setprecision(1) << time_to_min << " seconds" << std::endl;
-    } else {
-        std::cout << "Status:      *** VIOLATION - IMMEDIATE ACTION REQUIRED ***" << std::endl;
+    void signal_handler(int) {
+        g_running = false;
     }
-    std::cout << "----------------------------------------" << std::endl;
 }
 
-int main() {
-    try {
-        std::cout << "Initializing ATC system..." << std::endl;
+namespace atc {
 
-        // Create and initialize the communication channel
-        auto channel = std::make_shared<atc::comm::QnxChannel>("RADAR_CHANNEL");
-        if (!channel->initialize()) {
-            std::cerr << "Failed to initialize communication channel" << std::endl;
+class ATCSystem {
+public:
+    ATCSystem()
+        : violation_detector_(std::make_shared<ViolationDetector>())
+        , display_system_(std::make_shared<DisplaySystem>(violation_detector_)) {
+
+        // Set up signal handling for graceful shutdown
+        std::signal(SIGINT, signal_handler);
+        std::signal(SIGTERM, signal_handler);
+
+        // Initialize communication channel
+        channel_ = std::make_shared<comm::QnxChannel>("ATC_CHANNEL");
+        if (!channel_->initialize()) {
+            throw std::runtime_error("Failed to initialize communication channel");
+        }
+
+        std::cout << "ATC System initialized successfully" << std::endl;
+    }
+
+    ~ATCSystem() {
+        cleanup();
+    }
+
+    bool isRunning() const {
+        return g_running;
+    }
+
+    void cleanup() {
+        // Stop all components first
+        if (display_system_) {
+            std::cout << "Stopping display system..." << std::endl;
+            display_system_->stop();
+        }
+
+        if (violation_detector_) {
+            std::cout << "Stopping violation detector..." << std::endl;
+            violation_detector_->stop();
+        }
+
+        for (const auto& aircraft : aircraft_) {
+            if (aircraft) {
+                aircraft->stop();
+            }
+        }
+        aircraft_.clear();
+
+        // Clean up channel last
+        channel_.reset();
+
+        std::cout << "Cleanup complete." << std::endl;
+    }
+
+    bool loadAircraftData(const std::string& filename) {
+        std::cout << "\nAttempting to load aircraft data from: " << filename << std::endl;
+
+        std::ifstream file(filename);
+        if (!file) {
+            std::cerr << "ERROR: Cannot open file: " << filename << std::endl;
+            return false;
+        }
+
+        std::string line;
+        if (!std::getline(file, line)) {
+            std::cerr << "ERROR: Empty file or cannot read header" << std::endl;
+            return false;
+        }
+
+        if (line != "Time,ID,X,Y,Z,SpeedX,SpeedY,SpeedZ") {
+            std::cerr << "ERROR: Invalid header format" << std::endl;
+            return false;
+        }
+
+        int success_count = 0;
+        while (std::getline(file, line)) {
+            if (line.empty()) {
+                continue;
+            }
+
+            std::istringstream iss(line);
+            std::string token;
+            std::vector<std::string> tokens;
+
+            while (std::getline(iss, token, ',')) {
+                tokens.push_back(token);
+            }
+
+            if (tokens.size() != 8) {
+                std::cerr << "ERROR: Invalid number of fields in line" << std::endl;
+                continue;
+            }
+
+            try {
+                double time = std::stod(tokens[0]);
+                std::string id = tokens[1];
+                double x = std::stod(tokens[2]);
+                double y = std::stod(tokens[3]);
+                double z = std::stod(tokens[4]);
+                double speedX = std::stod(tokens[5]);
+                double speedY = std::stod(tokens[6]);
+                double speedZ = std::stod(tokens[7]);
+
+                // Validate position
+                if (x < constants::AIRSPACE_X_MIN || x > constants::AIRSPACE_X_MAX ||
+                    y < constants::AIRSPACE_Y_MIN || y > constants::AIRSPACE_Y_MAX ||
+                    z < constants::AIRSPACE_Z_MIN || z > constants::AIRSPACE_Z_MAX) {
+                    std::cerr << "ERROR: Position out of bounds for aircraft " << id << std::endl;
+                    continue;
+                }
+
+                Position pos{x, y, z};
+                Velocity vel{speedX, speedY, speedZ};
+
+                auto aircraft = std::make_shared<Aircraft>(id, pos, vel);
+                aircraft_.push_back(aircraft);
+                violation_detector_->addAircraft(aircraft);
+                display_system_->addAircraft(aircraft);
+
+                success_count++;
+
+            } catch (const std::exception& e) {
+                std::cerr << "ERROR: Failed to parse aircraft data: " << e.what() << std::endl;
+                continue;
+            }
+        }
+
+        std::cout << "Successfully loaded " << success_count << " aircraft" << std::endl;
+        return success_count > 0;
+    }
+
+    void run() {
+        std::cout << "\nStarting ATC System components..." << std::endl;
+
+        for (const auto& aircraft : aircraft_) {
+            aircraft->start();
+        }
+
+        violation_detector_->start();
+        display_system_->start();
+
+        std::cout << "System running. Press Ctrl+C to exit." << std::endl;
+
+        while (isRunning()) {
+            processMessages();
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+
+        cleanup();
+    }
+
+private:
+    void processMessages() {
+        comm::Message msg;
+        if (channel_->receiveMessage(msg, 0)) {
+            handleMessage(msg);
+        }
+    }
+
+    void handleMessage(const comm::Message& msg) {
+        switch (msg.type) {
+            case comm::MessageType::COMMAND:
+                if (auto* cmd_data = std::get_if<comm::CommandData>(&msg.payload)) {
+                    handleCommand(*cmd_data);
+                }
+                break;
+
+            case comm::MessageType::ALERT:
+                if (auto* alert_data = std::get_if<comm::AlertData>(&msg.payload)) {
+                    handleAlert(*alert_data);
+                }
+                break;
+
+            default:
+                break;
+        }
+    }
+
+    void handleCommand(const comm::CommandData& cmd) {
+        auto it = std::find_if(aircraft_.begin(), aircraft_.end(),
+            [&](const auto& aircraft) {
+                return aircraft->getState().callsign == cmd.target_id;
+            });
+
+        if (it == aircraft_.end()) {
+            std::cerr << "Aircraft not found: " << cmd.target_id << std::endl;
+            return;
+        }
+    }
+
+    void handleAlert(const comm::AlertData& alert) {
+        std::cout << "ALERT [Level " << static_cast<int>(alert.level)
+                  << "]: " << alert.description << std::endl;
+    }
+
+    std::vector<std::shared_ptr<Aircraft>> aircraft_;
+    std::shared_ptr<ViolationDetector> violation_detector_;
+    std::shared_ptr<DisplaySystem> display_system_;
+    std::shared_ptr<comm::QnxChannel> channel_;
+};
+
+} // namespace atc
+
+int main(int argc, char** argv) {
+    try {
+        if (argc < 2) {
+            std::cerr << "Usage: " << argv[0] << " <aircraft_data_file>" << std::endl;
             return 1;
         }
-        std::cout << "Communication channel initialized" << std::endl;
 
-        // Initialize aircraft on converging paths
-        // First aircraft moving west
-        atc::Position pos1{60000, 50000, 20000};
-        atc::Velocity vel1;
-        vel1.vx = -400;  // Moving west
-        vel1.vy = 0;
-        vel1.vz = 0;
+        atc::ATCSystem system;
 
-        // Second aircraft moving east
-        atc::Position pos2{40000, 50000, 20000};
-        atc::Velocity vel2;
-        vel2.vx = 400;   // Moving east
-        vel2.vy = 0;
-        vel2.vz = 0;
-
-        // Create violation detector
-        auto violation_detector = std::make_shared<atc::ViolationDetector>(30);
-
-        std::cout << "\nCreating test aircraft..." << std::endl;
-        std::cout << "FLIGHT1: Starting at (" << pos1.x << ", " << pos1.y << ", " << pos1.z
-                  << "), moving west at 400 units/s" << std::endl;
-        std::cout << "FLIGHT2: Starting at (" << pos2.x << ", " << pos2.y << ", " << pos2.z
-                  << "), moving east at 400 units/s" << std::endl;
-
-        auto aircraft1 = std::make_shared<atc::Aircraft>("FLIGHT1", pos1, vel1);
-        auto aircraft2 = std::make_shared<atc::Aircraft>("FLIGHT2", pos2, vel2);
-
-        // Add aircraft to violation detector
-        violation_detector->addAircraft(aircraft1);
-        violation_detector->addAircraft(aircraft2);
-
-        // Start components
-        std::cout << "\nStarting simulation..." << std::endl;
-        aircraft1->start();
-        aircraft2->start();
-        violation_detector->start();
-
-        // Print simulation parameters
-        double initial_separation = 20000.0;  // Initial separation between aircraft
-        printSimulationHeader(initial_separation);
-
-        // Run for 30 seconds
-        for (int i = 0; i < 30; ++i) {
-            std::this_thread::sleep_for(std::chrono::seconds(1));
-
-            auto state1 = aircraft1->getState();
-            auto state2 = aircraft2->getState();
-
-            // Calculate current separation
-            double dx = state1.position.x - state2.position.x;
-            double dy = state1.position.y - state2.position.y;
-            double separation = std::sqrt(dx*dx + dy*dy);
-
-            // Print time status
-            printTimeStatus(i, separation);
+        if (!system.loadAircraftData(argv[1])) {
+            std::cerr << "Failed to load aircraft data" << std::endl;
+            return 1;
         }
 
-        // Stop simulation
-        std::cout << "\nStopping simulation..." << std::endl;
-        aircraft1->stop();
-        aircraft2->stop();
-        violation_detector->stop();
-
+        system.run();
         return 0;
-    } catch (const std::exception& e) {
-        std::cerr << "Error: " << e.what() << std::endl;
+    }
+    catch (const std::exception& e) {
+        std::cerr << "Fatal error: " << e.what() << std::endl;
         return 1;
     }
 }

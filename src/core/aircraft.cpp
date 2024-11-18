@@ -1,12 +1,13 @@
 #include "core/aircraft.h"
+#include "common/constants.h"
 #include <iostream>
 #include <iomanip>
 
 namespace atc {
 
 Aircraft::Aircraft(const std::string& callsign,
-                 const Position& initial_pos,
-                 const Velocity& initial_vel)
+                   const Position& initial_pos,
+                   const Velocity& initial_vel)
     : PeriodicTask(std::chrono::milliseconds(constants::POSITION_UPDATE_INTERVAL),
                    constants::AIRCRAFT_UPDATE_PRIORITY) {
 
@@ -169,9 +170,7 @@ void Aircraft::updatePosition() {
 }
 
 bool Aircraft::validateSpeed(double speed) const {
-    static constexpr double MIN_SPEED = 150.0;  // Minimum safe speed
-    static constexpr double MAX_SPEED = 500.0;  // Maximum allowed speed
-    return speed >= MIN_SPEED && speed <= MAX_SPEED;
+    return speed >= constants::MIN_SPEED && speed <= constants::MAX_SPEED;
 }
 
 bool Aircraft::validateAltitude(double altitude) const {
@@ -179,4 +178,5 @@ bool Aircraft::validateAltitude(double altitude) const {
            altitude <= constants::AIRSPACE_Z_MAX;
 }
 
-}
+} // namespace atc
+

@@ -42,6 +42,17 @@ public:
     int64_t getBestExecutionTime() const { return best_execution_time_; }
     int64_t getWorstExecutionTime() const { return worst_execution_time_; }
 
+    // Period management
+    void setPeriod(std::chrono::milliseconds new_period) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        period_ = new_period;
+    }
+
+    std::chrono::milliseconds getPeriod() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return period_;
+    }
+
 protected:
     virtual void execute() = 0;
 
@@ -60,9 +71,16 @@ private:
                 exec_end - exec_start).count();
             updateExecutionStats(duration);
 
+            // Get current period
+            std::chrono::milliseconds current_period;
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                current_period = period_;
+            }
+
             // Sleep for remaining time in period
             auto end = std::chrono::steady_clock::now();
-            auto next_period = start + period_;
+            auto next_period = start + current_period;
             if (next_period > end) {
                 std::this_thread::sleep_until(next_period);
             }
@@ -83,7 +101,7 @@ private:
     std::thread thread_;
     std::atomic<int64_t> best_execution_time_{0};
     std::atomic<int64_t> worst_execution_time_{0};
-    std::mutex mutex_;
+    mutable std::mutex mutex_;
 };
 
 }
