@@ -6,6 +6,7 @@
 #include "common/periodic_task.h"
 #include <memory>
 #include <mutex>
+#include <string>
 
 namespace atc {
 
@@ -13,8 +14,7 @@ class Aircraft : public PeriodicTask {
 public:
     Aircraft(const std::string& callsign,
             const Position& initial_pos,
-            const Velocity& initial_vel,
-            const FlightCharacteristics& characteristics);
+            const Velocity& initial_vel);
 
     // State access
     AircraftState getState() const;
@@ -23,6 +23,8 @@ public:
     bool updateSpeed(double new_speed);
     bool updateHeading(double new_heading);
     bool updateAltitude(double new_altitude);
+
+    // Emergency handling
     void declareEmergency();
     void cancelEmergency();
 
@@ -31,12 +33,16 @@ protected:
 
 private:
     void updatePosition();
+    bool validateSpeed(double speed) const;
+    bool validateAltitude(double altitude) const;
+
+    // Logging methods
+    void logState(const std::string& event, const AircraftState& state);
+    std::string getStatusString(AircraftStatus status);
 
     AircraftState state_;
-    FlightCharacteristics characteristics_;
     mutable std::mutex state_mutex_;
 };
 
 }
-
 #endif // ATC_AIRCRAFT_H
