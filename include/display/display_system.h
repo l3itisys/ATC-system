@@ -19,7 +19,10 @@ public:
     ~DisplaySystem() = default;
 
     void addAircraft(const std::shared_ptr<Aircraft>& aircraft);
+    void addAircraft(const std::vector<std::shared_ptr<Aircraft>>& aircraft);
     void removeAircraft(const std::string& callsign);
+    void displayAlert(const std::string& alert_message);
+    void updateDisplay(const std::vector<std::shared_ptr<Aircraft>>& current_aircraft);
 
 protected:
     void execute() override;
@@ -111,8 +114,9 @@ private:
     std::vector<std::shared_ptr<Aircraft>> aircraft_;
     std::shared_ptr<ViolationDetector> violation_detector_;
     int update_count_ = 0;
+    std::string current_alert_message_;
 };
 
-} // namespace atc
+}
 
 #endif // ATC_DISPLAY_SYSTEM_H
