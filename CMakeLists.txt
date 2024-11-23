@@ -12,6 +12,7 @@ include_directories(${QNX_TARGET}/usr/include)
 # Source files by component
 set(CORE_SOURCES
     src/core/aircraft.cpp
+    src/core/control_computer.cpp
     src/core/violation_detector.cpp
 )
 
