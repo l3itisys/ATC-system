@@ -17,6 +17,7 @@ set(CORE_SOURCES
     src/common/logger.cpp
     src/common/constants.cpp
     src/common/history_logger.cpp
+    src/core/radar_system.cpp
 )
 
 set(COMMUNICATION_SOURCES

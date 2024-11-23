@@ -437,9 +437,32 @@ void DisplaySystem::displayFooter() const {
     std::cout << std::string(70, '-') << std::endl;
 }
 
-void DisplaySystem::addAircraft(const std::shared_ptr<Aircraft>& aircraft) {
+void DisplaySystem::addAircraft(const std::vector<std::shared_ptr<Aircraft>>& new_aircraft) {
     std::lock_guard<std::mutex> lock(display_mutex_);
-    aircraft_.push_back(aircraft);
+    for (const auto& aircraft : new_aircraft) {
+        auto it = std::find_if(aircraft_.begin(), aircraft_.end(),
+            [&](const auto& existing) {
+                return existing->getState().callsign == aircraft->getState().callsign;
+            });
+
+        if (it == aircraft_.end()) {
+            aircraft_.push_back(aircraft);
+        }
+    }
+}
+
+void DisplaySystem::displayAlert(const std::string& alert_message) {
+    std::lock_guard<std::mutex> lock(display_mutex_);
+    current_alert_message_ = alert_message;
+    std::cout << Colors::red() << Colors::bold()
+              << "ALERT: " << alert_message
+              << Colors::reset() << std::endl;
+}
+
+void DisplaySystem::updateDisplay(const std::vector<std::shared_ptr<Aircraft>>& current_aircraft) {
+    std::lock_guard<std::mutex> lock(display_mutex_);
+    aircraft_ = current_aircraft;  // Update the entire aircraft list
+    execute();  // Refresh the display
 }
 
 void DisplaySystem::removeAircraft(const std::string& callsign) {

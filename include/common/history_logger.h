@@ -19,6 +19,7 @@ public:
     void updateAircraftStates(const std::vector<std::shared_ptr<Aircraft>>& aircraft);
     bool isOperational() const { return file_operational_; }
 
+
 protected:
     void execute() override;
 
