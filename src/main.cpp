@@ -2,6 +2,7 @@
 #include "core/violation_detector.h"
 #include "core/radar_system.h"
 #include "display/display_system.h"
+#include "operator/console.h"
 #include "common/types.h"
 #include "common/constants.h"
 #include "common/logger.h"
@@ -38,6 +39,7 @@ struct SystemMetrics {
     uint64_t violation_checks;
     uint64_t radar_updates;
     uint64_t display_updates;
+    uint64_t operator_commands;
 
     SystemMetrics()
         : start_time(std::chrono::steady_clock::now())
@@ -45,7 +47,8 @@ struct SystemMetrics {
         , processed_updates(0)
         , violation_checks(0)
         , radar_updates(0)
-        , display_updates(0) {}
+        , display_updates(0)
+        , operator_commands(0) {}
 };
 
 class ATCSystem {
@@ -54,6 +57,7 @@ public:
         : violation_detector_(std::make_shared<ViolationDetector>())
         , display_system_(std::make_shared<DisplaySystem>(violation_detector_))
         , history_logger_(std::make_shared<HistoryLogger>("atc_history.log"))
+        , operator_console_(nullptr)
         , metrics_() {
 
         // Initialize signal handlers
@@ -65,6 +69,13 @@ public:
         if (!channel_->initialize()) {
             Logger::getInstance().log("Failed to initialize communication channel");
             throw std::runtime_error("Failed to initialize communication channel");
+        }
+
+        // Initialize operator console after channel is ready
+        operator_console_ = std::make_shared<OperatorConsole>(channel_);
+        if (!operator_console_ || !operator_console_->isOperational()) {
+            Logger::getInstance().log("Failed to initialize operator console");
+            throw std::runtime_error("Failed to initialize operator console");
         }
 
         // Initialize radar system
@@ -109,6 +120,11 @@ public:
             display_system_->stop();
         }
 
+        if (operator_console_) {
+            Logger::getInstance().log("Stopping operator console...");
+            operator_console_->stop();
+        }
+
         if (violation_detector_) {
             Logger::getInstance().log("Stopping violation detector...");
             violation_detector_->stop();
@@ -120,6 +136,7 @@ public:
                 aircraft->stop();
             }
         }
+
         aircraft_.clear();
 
         // Log final metrics
@@ -185,7 +202,6 @@ public:
                 if (x < constants::AIRSPACE_X_MIN || x > constants::AIRSPACE_X_MAX ||
                     y < constants::AIRSPACE_Y_MIN || y > constants::AIRSPACE_Y_MAX ||
                     z < constants::AIRSPACE_Z_MIN || z > constants::AIRSPACE_Z_MAX) {
-
                     Logger::getInstance().log("ERROR: Position out of bounds for aircraft " + id);
                     failed_entries.push_back(id + " (Invalid Position)");
                     error_count++;
@@ -203,16 +219,14 @@ public:
 
                 Position pos{x, y, z};
                 Velocity vel{speedX, speedY, speedZ};
-
                 auto aircraft = std::make_shared<Aircraft>(id, pos, vel);
                 aircraft_.push_back(aircraft);
                 violation_detector_->addAircraft(aircraft);
                 radar_system_->addAircraft(aircraft);
-
                 success_count++;
                 Logger::getInstance().log("Successfully loaded aircraft: " + id);
-
-            } catch (const std::exception& e) {
+            }
+            catch (const std::exception& e) {
                 Logger::getInstance().log("ERROR: Failed to parse aircraft data: " + std::string(e.what()));
                 failed_entries.push_back(tokens[1] + " (" + e.what() + ")");
                 error_count++;
@@ -251,6 +265,7 @@ public:
         violation_detector_->start();
         display_system_->start();
         history_logger_->start();
+        operator_console_->start();
 
         Logger::getInstance().log("All system components started");
 
@@ -258,6 +273,9 @@ public:
 
         while (isRunning()) {
             auto cycle_start = std::chrono::steady_clock::now();
+
+            // Process operator commands
+            processOperatorCommands();
 
             // Get current aircraft states
             std::vector<std::shared_ptr<Aircraft>> current_aircraft = aircraft_;
@@ -269,32 +287,8 @@ public:
             // Update history logger
             history_logger_->updateAircraftStates(current_aircraft);
 
-            // Get violations from detector
-            auto violations = violation_detector_->getCurrentViolations();
-            for (const auto& violation : violations) {
-                std::ostringstream alert;
-                alert << "Separation violation between "
-                      << violation.aircraft1_id << " and "
-                      << violation.aircraft2_id
-                      << " (H:" << std::fixed << std::setprecision(1)
-                      << violation.horizontal_separation
-                      << ", V:" << violation.vertical_separation << ")";
-                display_system_->displayAlert(alert.str());
-            }
-
-            // Check predicted violations
-            auto predictions = violation_detector_->getPredictedViolations();
-            for (const auto& pred : predictions) {
-                std::ostringstream alert;
-                alert << "Predicted violation in "
-                      << std::fixed << std::setprecision(1)
-                      << pred.time_to_violation << "s between "
-                      << pred.aircraft1_id << " and "
-                      << pred.aircraft2_id;
-                display_system_->displayAlert(alert.str());
-            }
-
-            metrics_.violation_checks++;
+            // Process violations and alerts
+            processViolationsAndAlerts();
 
             // Process system tasks
             processSystemTasks();
@@ -312,7 +306,6 @@ public:
             auto cycle_end = std::chrono::steady_clock::now();
             auto cycle_duration = std::chrono::duration_cast<std::chrono::milliseconds>(
                 cycle_end - cycle_start);
-
             if (cycle_duration.count() < 100) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(100) - cycle_duration);
             }
@@ -322,6 +315,89 @@ public:
     }
 
 private:
+    void processOperatorCommands() {
+        comm::Message msg;
+        while (channel_->receiveMessage(msg, 0)) {
+            if (msg.type == comm::MessageType::COMMAND) {
+                const auto& cmd_data = std::get<comm::CommandData>(msg.payload);
+                executeOperatorCommand(cmd_data);
+                metrics_.operator_commands++;
+            }
+        }
+    }
+
+    void processViolationsAndAlerts() {
+        // Get violations from detector
+        auto violations = violation_detector_->getCurrentViolations();
+        for (const auto& violation : violations) {
+            std::ostringstream alert;
+            alert << "Separation violation between "
+                  << violation.aircraft1_id << " and "
+                  << violation.aircraft2_id
+                  << " (H:" << std::fixed << std::setprecision(1)
+                  << violation.horizontal_separation
+                  << ", V:" << violation.vertical_separation << ")";
+            display_system_->displayAlert(alert.str());
+        }
+
+        // Check predicted violations
+        auto predictions = violation_detector_->getPredictedViolations();
+        for (const auto& pred : predictions) {
+            std::ostringstream alert;
+            alert << "Predicted violation in "
+                  << std::fixed << std::setprecision(1)
+                  << pred.time_to_violation << "s between "
+                  << pred.aircraft1_id << " and "
+                  << pred.aircraft2_id;
+            display_system_->displayAlert(alert.str());
+        }
+        metrics_.violation_checks++;
+    }
+
+    void executeOperatorCommand(const comm::CommandData& cmd) {
+        auto it = std::find_if(aircraft_.begin(), aircraft_.end(),
+            [&cmd](const auto& aircraft) {
+                return aircraft->getState().callsign == cmd.target_id;
+            });
+
+        if (it != aircraft_.end()) {
+            try {
+                if (cmd.command == "ALTITUDE" && !cmd.params.empty()) {
+                    double altitude = std::stod(cmd.params[0]);
+                    (*it)->updateAltitude(altitude);
+                    Logger::getInstance().log("Altitude updated for " + cmd.target_id);
+                }
+                else if (cmd.command == "SPEED" && !cmd.params.empty()) {
+                    double speed = std::stod(cmd.params[0]);
+                    (*it)->updateSpeed(speed);
+                    Logger::getInstance().log("Speed updated for " + cmd.target_id);
+                }
+                else if (cmd.command == "HEADING" && !cmd.params.empty()) {
+                    double heading = std::stod(cmd.params[0]);
+                    (*it)->updateHeading(heading);
+                    Logger::getInstance().log("Heading updated for " + cmd.target_id);
+                }
+                else if (cmd.command == "EMERGENCY") {
+                    bool declare = !cmd.params.empty() && cmd.params[0] == "1";
+                    if (declare) {
+                        (*it)->declareEmergency();
+                    } else {
+                        (*it)->cancelEmergency();
+                    }
+                }
+                else if (cmd.command == "STATUS") {
+                    auto state = (*it)->getState();
+                    logAircraftStatus(state);
+                }
+            }
+            catch (const std::exception& e) {
+                Logger::getInstance().log("Error executing command: " + std::string(e.what()));
+            }
+        } else {
+            Logger::getInstance().log("Aircraft not found: " + cmd.target_id);
+        }
+    }
+
     void processSystemTasks() {
         comm::Message msg;
         while (channel_->receiveMessage(msg, 0)) {
@@ -335,30 +411,26 @@ private:
                 case comm::MessageType::COMMAND:
                     handleCommand(std::get<comm::CommandData>(msg.payload));
                     break;
-
                 case comm::MessageType::ALERT:
                     handleAlert(std::get<comm::AlertData>(msg.payload));
                     break;
-
                 case comm::MessageType::POSITION_UPDATE:
                     handlePositionUpdate(std::get<AircraftState>(msg.payload));
                     break;
-
                 case comm::MessageType::STATUS_REQUEST:
                     handleStatusRequest(msg.sender_id);
                     break;
-
                 default:
                     Logger::getInstance().log("Unknown message type received from " + msg.sender_id);
             }
-        } catch (const std::exception& e) {
+        }
+        catch (const std::exception& e) {
             Logger::getInstance().log("Error handling message: " + std::string(e.what()));
         }
     }
 
-    void handleCommand(const comm::CommandData& cmd) {
+   void handleCommand(const comm::CommandData& cmd) {
         Logger::getInstance().log("Received command for " + cmd.target_id + ": " + cmd.command);
-
         auto aircraft_it = std::find_if(aircraft_.begin(), aircraft_.end(),
             [&cmd](const auto& aircraft) {
                 return aircraft->getState().callsign == cmd.target_id;
@@ -392,7 +464,7 @@ private:
         } else {
             Logger::getInstance().log("Aircraft not found: " + cmd.target_id);
         }
-    }
+   }
 
     void handleAlert(const comm::AlertData& alert) {
         std::ostringstream oss;
@@ -407,7 +479,6 @@ private:
             [&state](const auto& aircraft) {
                 return aircraft->getState().callsign == state.callsign;
             });
-
         if (aircraft_it != aircraft_.end()) {
             std::vector<std::shared_ptr<Aircraft>> current_aircraft = {*aircraft_it};
             display_system_->updateDisplay(current_aircraft);
@@ -421,7 +492,6 @@ private:
                << "Updates Processed: " << metrics_.processed_updates << "\n"
                << "Violation Checks: " << metrics_.violation_checks << "\n"
                << "System Uptime: " << getSystemUptime() << "s";
-
         comm::AlertData response{0, status.str()};
         comm::Message msg = comm::Message::createAlert("ATC_SYSTEM", response);
         channel_->sendMessage(msg);
@@ -440,6 +510,7 @@ private:
             << "Violation Checks: " << metrics_.violation_checks << "\n"
             << "Radar Updates: " << metrics_.radar_updates << "\n"
             << "Display Updates: " << metrics_.display_updates << "\n"
+            << "Operator Commands: " << metrics_.operator_commands << "\n"
             << "Updates/Second: " << (metrics_.processed_updates / std::max(1L, uptime)) << "\n"
             << "Last Update: " << formatTimestamp(metrics_.last_update_time) << "\n"
             << "=========================\n";
@@ -461,9 +532,24 @@ private:
             << "Total Violation Checks: " << metrics_.violation_checks << "\n"
             << "Total Radar Updates: " << metrics_.radar_updates << "\n"
             << "Total Display Updates: " << metrics_.display_updates << "\n"
+            << "Total Operator Commands: " << metrics_.operator_commands << "\n"
             << "Average Updates/Second: " << (metrics_.processed_updates / std::max(1L, total_runtime)) << "\n"
             << "============================\n";
 
+        Logger::getInstance().log(oss.str());
+    }
+
+    void logAircraftStatus(const AircraftState& state) {
+        std::ostringstream oss;
+        oss << "\nAircraft Status: " << state.callsign
+            << "\nPosition: (" << std::fixed << std::setprecision(2)
+            << state.position.x << ", "
+            << state.position.y << ", "
+            << state.position.z << ")"
+            << "\nSpeed: " << state.getSpeed()
+            << "\nHeading: " << state.heading
+            << "\nStatus: " << Aircraft::getStatusString(state.status)
+            << "\nTimestamp: " << state.timestamp;
         Logger::getInstance().log(oss.str());
     }
 
@@ -488,6 +574,7 @@ private:
     std::shared_ptr<DisplaySystem> display_system_;
     std::shared_ptr<HistoryLogger> history_logger_;
     std::shared_ptr<RadarSystem> radar_system_;
+    std::shared_ptr<OperatorConsole> operator_console_;
     std::shared_ptr<comm::QnxChannel> channel_;
     SystemMetrics metrics_;
 };
@@ -520,12 +607,13 @@ int main(int argc, char** argv) {
 
             atc::Logger::getInstance().log("System shutdown completed normally.");
             return 0;
-
-        } catch (const std::runtime_error& e) {
+        }
+        catch (const std::runtime_error& e) {
             atc::Logger::getInstance().log("System initialization failed: " +
                                          std::string(e.what()));
             return 1;
-        } catch (const std::exception& e) {
+        }
+        catch (const std::exception& e) {
             atc::Logger::getInstance().log("Unexpected error during system operation: " +
                                          std::string(e.what()));
             return 1;

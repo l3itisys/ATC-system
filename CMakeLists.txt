@@ -18,6 +18,8 @@ set(CORE_SOURCES
     src/common/constants.cpp
     src/common/history_logger.cpp
     src/core/radar_system.cpp
+    src/operator/console.cpp
+    src/operator/command.cpp
 )
 
 set(COMMUNICATION_SOURCES
@@ -30,6 +32,7 @@ add_executable(atc_system
     ${COMMUNICATION_SOURCES}
     ${DISPLAY_SOURCES}
     ${COMMON_SOURCES}
+    ${OPERATOR_SOURCES}
     src/main.cpp
 )
 
@@ -50,11 +53,13 @@ if(NOT CMAKE_CROSSCOMPILING)
     add_executable(run_tests
         test/core/aircraft_test.cpp
         test/display/display_test.cpp
+        test/operator/console_test.cpp
     )
 
     target_link_libraries(run_tests
         ${GTEST_LIBRARIES}
         pthread
+
     )
 
     add_test(NAME CoreTests COMMAND run_tests)

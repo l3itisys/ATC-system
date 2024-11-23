@@ -23,6 +23,7 @@ public:
     void removeAircraft(const std::string& callsign);
     void displayAlert(const std::string& alert_message);
     void updateDisplay(const std::vector<std::shared_ptr<Aircraft>>& current_aircraft);
+    void setOperatorMode(bool enabled) { operator_mode_ = enabled; }
 
 protected:
     void execute() override;
@@ -86,6 +87,9 @@ private:
     void displayViolations() const;
     void displayFooter() const;
     void displayAircraftDetails() const;
+    void preserveOperatorPrompt() const;
+    void saveCursorPosition() const;
+    void restoreCursorPosition() const;
 
     // Helper methods
     char getDirectionSymbol(double heading) const;
@@ -106,7 +110,8 @@ private:
     static constexpr int PREDICTION_TIME = 30;  // seconds
     static constexpr int MIN_DISPLAY_UPDATE = 1000;  // milliseconds
     static constexpr int MAX_DISPLAY_UPDATE = 10000; // milliseconds
-
+    static constexpr int DISPLAY_BOTTOM_MARGIN = 3;  // Lines to reserve for operator input
+    static constexpr int ALERT_DISPLAY_TIME = 5000;  // milliseconds
     static constexpr char PREDICTED_POSITION_MARKER = '*';
 
     // Member variables
@@ -115,6 +120,8 @@ private:
     std::shared_ptr<ViolationDetector> violation_detector_;
     int update_count_ = 0;
     std::string current_alert_message_;
+    std::chrono::steady_clock::time_point last_alert_time_;
+    bool operator_mode_ = false;
 };
 
 }
