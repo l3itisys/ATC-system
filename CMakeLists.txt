@@ -13,6 +13,10 @@ include_directories(${QNX_TARGET}/usr/include)
 set(CORE_SOURCES
     src/core/aircraft.cpp
     src/core/violation_detector.cpp
+    src/display/display_system.cpp
+    src/common/logger.cpp
+    src/common/constants.cpp
+    src/common/history_logger.cpp
 )
 
 set(COMMUNICATION_SOURCES
@@ -23,6 +27,8 @@ set(COMMUNICATION_SOURCES
 add_executable(atc_system
     ${CORE_SOURCES}
     ${COMMUNICATION_SOURCES}
+    ${DISPLAY_SOURCES}
+    ${COMMON_SOURCES}
     src/main.cpp
 )
 
@@ -42,6 +48,7 @@ if(NOT CMAKE_CROSSCOMPILING)
     # Test executable
     add_executable(run_tests
         test/core/aircraft_test.cpp
+        test/display/display_test.cpp
     )
 
     target_link_libraries(run_tests

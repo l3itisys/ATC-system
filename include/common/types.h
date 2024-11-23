@@ -1,44 +1,50 @@
 #ifndef ATC_TYPES_H
 #define ATC_TYPES_H
-
 #include <string>
-#include <chrono>
-#include <cstdint>
 #include <cmath>
-#include "constants.h"
+#include <chrono>
 
 namespace atc {
+namespace constants {
+    extern const double AIRSPACE_X_MIN;
+    extern const double AIRSPACE_X_MAX;
+    extern const double AIRSPACE_Y_MIN;
+    extern const double AIRSPACE_Y_MAX;
+    extern const double AIRSPACE_Z_MIN;
+    extern const double AIRSPACE_Z_MAX;
+}
 
-struct Position {
-    double x{0}, y{0}, z{0};
-    bool isValid() const {
+// Define AirspaceBoundary first
+struct AirspaceBoundary {
+    static bool isWithinLimits(double x, double y, double z) {
         return x >= constants::AIRSPACE_X_MIN && x <= constants::AIRSPACE_X_MAX &&
                y >= constants::AIRSPACE_Y_MIN && y <= constants::AIRSPACE_Y_MAX &&
                z >= constants::AIRSPACE_Z_MIN && z <= constants::AIRSPACE_Z_MAX;
     }
+};
 
-    double distanceTo(const Position& other) const {
-        double dx = x - other.x;
-        double dy = y - other.y;
-        return std::sqrt(dx*dx + dy*dy);
+struct Position {
+    double x;
+    double y;
+    double z;
+    bool isValid() const {
+        return AirspaceBoundary::isWithinLimits(x, y, z);  // Updated to use coordinate values
     }
 };
 
 struct Velocity {
-    double vx{0}, vy{0}, vz{0};
-
-    double getSpeed() const {
-        return std::sqrt(vx*vx + vy*vy + vz*vz);
-    }
-
-    void setFromSpeedAndHeading(double speed, double heading_deg) {
-        double heading_rad = heading_deg * M_PI / 180.0;
-        vx = speed * std::cos(90.0 - heading_rad);
-        vy = speed * std::sin(90.0 - heading_rad);
+    double vx;
+    double vy;
+    double vz;
+    void setFromSpeedAndHeading(double speed, double heading_degrees) {
+        double heading_radians = heading_degrees * M_PI / 180.0;
+        vx = speed * cos(heading_radians);
+        vy = speed * sin(heading_radians);
+        // vz remains unchanged unless explicitly modified
     }
 };
 
-enum class AircraftStatus : uint8_t {
+enum class AircraftStatus {
     ENTERING,
     CRUISING,
     HOLDING,
@@ -50,23 +56,36 @@ struct AircraftState {
     std::string callsign;
     Position position;
     Velocity velocity;
-    double heading{0};    // degrees
-    AircraftStatus status{AircraftStatus::ENTERING};
-    uint64_t timestamp{0};
+    double heading;         // in degrees
+    AircraftStatus status;
+    double timestamp;       // in milliseconds since epoch
+
+    double getSpeed() const {
+        return std::sqrt(velocity.vx * velocity.vx +
+                        velocity.vy * velocity.vy +
+                        velocity.vz * velocity.vz);
+    }
 
     void updateHeading() {
-        heading = std::atan2(velocity.vy, velocity.vx) * 180.0 / M_PI;
+        heading = atan2(velocity.vy, velocity.vx) * 180.0 / M_PI;
         if (heading < 0) heading += 360.0;
     }
 
     void updateTimestamp() {
-        timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::system_clock::now().time_since_epoch()).count();
+        auto now = std::chrono::system_clock::now();
+        auto duration = now.time_since_epoch();
+        timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(duration).count();
     }
+};
 
-    double getSpeed() const {
-        return velocity.getSpeed();
-    }
+struct ViolationInfo {
+    std::string aircraft1_id;
+    std::string aircraft2_id;
+    double horizontal_separation;
+    double vertical_separation;
+    bool is_predicted;
+    double prediction_time;  // in milliseconds since epoch
+    double timestamp;        // time when the violation was detected or predicted
 };
 
 }

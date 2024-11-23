@@ -1,12 +1,16 @@
 #include "core/aircraft.h"
+#include "common/constants.h"
+#include "common/logger.h"
+#include <sstream>
 #include <iostream>
 #include <iomanip>
+#include <stdexcept>
 
 namespace atc {
 
 Aircraft::Aircraft(const std::string& callsign,
-                 const Position& initial_pos,
-                 const Velocity& initial_vel)
+                   const Position& initial_pos,
+                   const Velocity& initial_vel)
     : PeriodicTask(std::chrono::milliseconds(constants::POSITION_UPDATE_INTERVAL),
                    constants::AIRCRAFT_UPDATE_PRIORITY) {
 
@@ -19,22 +23,25 @@ Aircraft::Aircraft(const std::string& callsign,
     state_.velocity = initial_vel;
     state_.updateHeading();
     state_.updateTimestamp();
+    state_.status = AircraftStatus::ENTERING;
 
     // Log initial state
     logState("Aircraft initialized", state_);
 }
 
 void Aircraft::logState(const std::string& event, const AircraftState& state) {
-    std::cout << "\n=== " << event << " ===" << std::endl;
-    std::cout << "Aircraft: " << state.callsign << "\n"
-              << std::fixed << std::setprecision(2)
-              << "Position: (" << state.position.x << ", "
-              << state.position.y << ", "
-              << state.position.z << ")\n"
-              << "Speed: " << state.getSpeed() << " units/s\n"
-              << "Heading: " << state.heading << " degrees\n"
-              << "Status: " << getStatusString(state.status) << "\n"
-              << "Timestamp: " << state.timestamp << std::endl;
+    std::ostringstream oss;
+    oss << "\n=== " << event << " ===\n";
+    oss << "Aircraft: " << state.callsign << "\n"
+        << std::fixed << std::setprecision(2)
+        << "Position: (" << state.position.x << ", "
+        << state.position.y << ", "
+        << state.position.z << ")\n"
+        << "Speed: " << state.getSpeed() << " units/s\n"
+        << "Heading: " << state.heading << " degrees\n"
+        << "Status: " << getStatusString(state.status) << "\n"
+        << "Timestamp: " << state.timestamp;
+    Logger::getInstance().log(oss.str());
 }
 
 std::string Aircraft::getStatusString(AircraftStatus status) {
@@ -55,19 +62,19 @@ void Aircraft::execute() {
         // Log periodic state update
         std::lock_guard<std::mutex> lock(state_mutex_);
         static int update_count = 0;
-        if (++update_count % 5 == 0) {  // Log every 5th update to avoid spam
+        if (++update_count % 5 == 0) {  // Log every 5th update to avoid excessive logging
             logState("Periodic Update", state_);
         }
     } catch (const std::exception& e) {
-        std::cerr << "Error updating aircraft " << state_.callsign
-                  << " position: " << e.what() << std::endl;
+        Logger::getInstance().log("Error updating aircraft " + state_.callsign +
+                                  " position: " + e.what());
         declareEmergency();
     }
 }
 
 bool Aircraft::updateSpeed(double new_speed) {
     if (!validateSpeed(new_speed)) {
-        std::cerr << "Invalid speed value: " << new_speed << std::endl;
+        Logger::getInstance().log("Invalid speed value: " + std::to_string(new_speed));
         return false;
     }
 
@@ -79,14 +86,14 @@ bool Aircraft::updateSpeed(double new_speed) {
         logState("Speed Updated", state_);
         return true;
     } catch (const std::exception& e) {
-        std::cerr << "Error updating speed: " << e.what() << std::endl;
+        Logger::getInstance().log("Error updating speed: " + std::string(e.what()));
         return false;
     }
 }
 
 bool Aircraft::updateHeading(double new_heading) {
     if (new_heading < 0 || new_heading >= 360) {
-        std::cerr << "Invalid heading value: " << new_heading << std::endl;
+        Logger::getInstance().log("Invalid heading value: " + std::to_string(new_heading));
         return false;
     }
 
@@ -99,14 +106,14 @@ bool Aircraft::updateHeading(double new_heading) {
         logState("Heading Updated", state_);
         return true;
     } catch (const std::exception& e) {
-        std::cerr << "Error updating heading: " << e.what() << std::endl;
+        Logger::getInstance().log("Error updating heading: " + std::string(e.what()));
         return false;
     }
 }
 
 bool Aircraft::updateAltitude(double new_altitude) {
     if (!validateAltitude(new_altitude)) {
-        std::cerr << "Invalid altitude value: " << new_altitude << std::endl;
+        Logger::getInstance().log("Invalid altitude value: " + std::to_string(new_altitude));
         return false;
     }
 
@@ -117,7 +124,7 @@ bool Aircraft::updateAltitude(double new_altitude) {
         logState("Altitude Updated", state_);
         return true;
     } catch (const std::exception& e) {
-        std::cerr << "Error updating altitude: " << e.what() << std::endl;
+        Logger::getInstance().log("Error updating altitude: " + std::string(e.what()));
         return false;
     }
 }
@@ -126,14 +133,14 @@ void Aircraft::declareEmergency() {
     std::lock_guard<std::mutex> lock(state_mutex_);
     state_.status = AircraftStatus::EMERGENCY;
     logState("Emergency Declared", state_);
-    std::cout << "Aircraft " << state_.callsign << " declaring emergency!" << std::endl;
+    Logger::getInstance().log("Aircraft " + state_.callsign + " declaring emergency!");
 }
 
 void Aircraft::cancelEmergency() {
     std::lock_guard<std::mutex> lock(state_mutex_);
     state_.status = AircraftStatus::CRUISING;
     logState("Emergency Cancelled", state_);
-    std::cout << "Aircraft " << state_.callsign << " emergency cancelled." << std::endl;
+    Logger::getInstance().log("Aircraft " + state_.callsign + " emergency cancelled.");
 }
 
 AircraftState Aircraft::getState() const {
@@ -169,9 +176,7 @@ void Aircraft::updatePosition() {
 }
 
 bool Aircraft::validateSpeed(double speed) const {
-    static constexpr double MIN_SPEED = 150.0;  // Minimum safe speed
-    static constexpr double MAX_SPEED = 500.0;  // Maximum allowed speed
-    return speed >= MIN_SPEED && speed <= MAX_SPEED;
+    return speed >= constants::MIN_SPEED && speed <= constants::MAX_SPEED;
 }
 
 bool Aircraft::validateAltitude(double altitude) const {
@@ -179,4 +184,5 @@ bool Aircraft::validateAltitude(double altitude) const {
            altitude <= constants::AIRSPACE_Z_MAX;
 }
 
-}
+} // namespace atc
+

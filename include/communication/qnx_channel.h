@@ -1,4 +1,3 @@
-// include/communication/qnx_channel.h
 #ifndef ATC_QNX_CHANNEL_H
 #define ATC_QNX_CHANNEL_H
 
@@ -22,14 +21,14 @@ public:
     bool receiveMessage(Message& message, int timeout_ms) override;
 
 private:
+    bool createChannel();
+    void cleanup();
+
     std::string channel_name_;
     int channel_id_;
     int connection_id_;
     name_attach_t* attach_ptr_;
-    std::mutex channel_mutex_;
-
-    bool createChannel();
-    void cleanup();
+    mutable std::mutex channel_mutex_;
 };
 
 }
