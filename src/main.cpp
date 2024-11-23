@@ -4,6 +4,8 @@
 #include "common/types.h"
 #include "common/constants.h"
 #include "communication/qnx_channel.h"
+#include "common/logger.h"
+#include "common/history_logger.h"
 #include <iostream>
 #include <iomanip>
 #include <thread>
@@ -30,19 +32,22 @@ class ATCSystem {
 public:
     ATCSystem()
         : violation_detector_(std::make_shared<ViolationDetector>())
-        , display_system_(std::make_shared<DisplaySystem>(violation_detector_)) {
+        , display_system_(std::make_shared<DisplaySystem>(violation_detector_))
+        , history_logger_(std::make_shared<HistoryLogger>()) {
 
-        // Set up signal handling for graceful shutdown
         std::signal(SIGINT, signal_handler);
         std::signal(SIGTERM, signal_handler);
 
-        // Initialize communication channel
         channel_ = std::make_shared<comm::QnxChannel>("ATC_CHANNEL");
         if (!channel_->initialize()) {
             throw std::runtime_error("Failed to initialize communication channel");
         }
 
-        std::cout << "ATC System initialized successfully" << std::endl;
+        if (!history_logger_->isOperational()) {
+            throw std::runtime_error("Failed to initialize history logger");
+        }
+
+        Logger::getInstance().log("ATC System initialized successfully");
     }
 
     ~ATCSystem() {
@@ -54,14 +59,18 @@ public:
     }
 
     void cleanup() {
-        // Stop all components first
+        if (history_logger_) {
+            Logger::getInstance().log("Stopping history logger...");
+            history_logger_->stop();
+        }
+
         if (display_system_) {
-            std::cout << "Stopping display system..." << std::endl;
+            Logger::getInstance().log("Stopping display system...");
             display_system_->stop();
         }
 
         if (violation_detector_) {
-            std::cout << "Stopping violation detector..." << std::endl;
+            Logger::getInstance().log("Stopping violation detector...");
             violation_detector_->stop();
         }
 
@@ -71,38 +80,34 @@ public:
             }
         }
         aircraft_.clear();
-
-        // Clean up channel last
         channel_.reset();
 
-        std::cout << "Cleanup complete." << std::endl;
+        Logger::getInstance().log("Cleanup complete.");
     }
 
     bool loadAircraftData(const std::string& filename) {
-        std::cout << "\nAttempting to load aircraft data from: " << filename << std::endl;
+        Logger::getInstance().log("Attempting to load aircraft data from: " + filename);
 
         std::ifstream file(filename);
         if (!file) {
-            std::cerr << "ERROR: Cannot open file: " << filename << std::endl;
+            Logger::getInstance().log("ERROR: Cannot open file: " + filename);
             return false;
         }
 
         std::string line;
         if (!std::getline(file, line)) {
-            std::cerr << "ERROR: Empty file or cannot read header" << std::endl;
+            Logger::getInstance().log("ERROR: Empty file or cannot read header");
             return false;
         }
 
         if (line != "Time,ID,X,Y,Z,SpeedX,SpeedY,SpeedZ") {
-            std::cerr << "ERROR: Invalid header format" << std::endl;
+            Logger::getInstance().log("ERROR: Invalid header format");
             return false;
         }
 
         int success_count = 0;
         while (std::getline(file, line)) {
-            if (line.empty()) {
-                continue;
-            }
+            if (line.empty()) continue;
 
             std::istringstream iss(line);
             std::string token;
@@ -113,7 +118,7 @@ public:
             }
 
             if (tokens.size() != 8) {
-                std::cerr << "ERROR: Invalid number of fields in line" << std::endl;
+                Logger::getInstance().log("ERROR: Invalid number of fields in line");
                 continue;
             }
 
@@ -127,11 +132,10 @@ public:
                 double speedY = std::stod(tokens[6]);
                 double speedZ = std::stod(tokens[7]);
 
-                // Validate position
                 if (x < constants::AIRSPACE_X_MIN || x > constants::AIRSPACE_X_MAX ||
                     y < constants::AIRSPACE_Y_MIN || y > constants::AIRSPACE_Y_MAX ||
                     z < constants::AIRSPACE_Z_MIN || z > constants::AIRSPACE_Z_MAX) {
-                    std::cerr << "ERROR: Position out of bounds for aircraft " << id << std::endl;
+                    Logger::getInstance().log("ERROR: Position out of bounds for aircraft " + id);
                     continue;
                 }
 
@@ -146,17 +150,17 @@ public:
                 success_count++;
 
             } catch (const std::exception& e) {
-                std::cerr << "ERROR: Failed to parse aircraft data: " << e.what() << std::endl;
+                Logger::getInstance().log("ERROR: Failed to parse aircraft data: " + std::string(e.what()));
                 continue;
             }
         }
 
-        std::cout << "Successfully loaded " << success_count << " aircraft" << std::endl;
+        Logger::getInstance().log("Successfully loaded " + std::to_string(success_count) + " aircraft");
         return success_count > 0;
     }
 
     void run() {
-        std::cout << "\nStarting ATC System components..." << std::endl;
+        Logger::getInstance().log("Starting ATC System components...");
 
         for (const auto& aircraft : aircraft_) {
             aircraft->start();
@@ -164,11 +168,15 @@ public:
 
         violation_detector_->start();
         display_system_->start();
+        history_logger_->start();
 
-        std::cout << "System running. Press Ctrl+C to exit." << std::endl;
+        std::chrono::steady_clock::time_point last_history_update =
+            std::chrono::steady_clock::now();
 
         while (isRunning()) {
-            processMessages();
+            auto now = std::chrono::steady_clock::now();
+            history_logger_->updateAircraftStates(aircraft_);
+            processSystemTasks();
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
 
@@ -176,52 +184,44 @@ public:
     }
 
 private:
-    void processMessages() {
+    void processSystemTasks() {
         comm::Message msg;
-        if (channel_->receiveMessage(msg, 0)) {
+        while (channel_->receiveMessage(msg, 0)) {
             handleMessage(msg);
         }
     }
 
     void handleMessage(const comm::Message& msg) {
-        switch (msg.type) {
-            case comm::MessageType::COMMAND:
-                if (auto* cmd_data = std::get_if<comm::CommandData>(&msg.payload)) {
-                    handleCommand(*cmd_data);
-                }
-                break;
-
-            case comm::MessageType::ALERT:
-                if (auto* alert_data = std::get_if<comm::AlertData>(&msg.payload)) {
-                    handleAlert(*alert_data);
-                }
-                break;
-
-            default:
-                break;
+        try {
+            switch (msg.type) {
+                case comm::MessageType::COMMAND:
+                    handleCommand(std::get<comm::CommandData>(msg.payload));
+                    break;
+                case comm::MessageType::ALERT:
+                    handleAlert(std::get<comm::AlertData>(msg.payload));
+                    break;
+                default:
+                    Logger::getInstance().log("Unknown message type received");
+            }
+        } catch (const std::exception& e) {
+            Logger::getInstance().log("Error handling message: " + std::string(e.what()));
         }
     }
 
     void handleCommand(const comm::CommandData& cmd) {
-        auto it = std::find_if(aircraft_.begin(), aircraft_.end(),
-            [&](const auto& aircraft) {
-                return aircraft->getState().callsign == cmd.target_id;
-            });
-
-        if (it == aircraft_.end()) {
-            std::cerr << "Aircraft not found: " << cmd.target_id << std::endl;
-            return;
-        }
+        Logger::getInstance().log("Received command for " + cmd.target_id + ": " + cmd.command);
+        // TODO: Implement command handling
     }
 
     void handleAlert(const comm::AlertData& alert) {
-        std::cout << "ALERT [Level " << static_cast<int>(alert.level)
-                  << "]: " << alert.description << std::endl;
+        Logger::getInstance().log("Received alert: " + alert.description);
+        // TODO: Implement alert handling
     }
 
     std::vector<std::shared_ptr<Aircraft>> aircraft_;
     std::shared_ptr<ViolationDetector> violation_detector_;
     std::shared_ptr<DisplaySystem> display_system_;
+    std::shared_ptr<HistoryLogger> history_logger_;
     std::shared_ptr<comm::QnxChannel> channel_;
 };
 
@@ -245,7 +245,7 @@ int main(int argc, char** argv) {
         return 0;
     }
     catch (const std::exception& e) {
-        std::cerr << "Fatal error: " << e.what() << std::endl;
+        atc::Logger::getInstance().log(std::string("Fatal error: ") + e.what());
         return 1;
     }
 }

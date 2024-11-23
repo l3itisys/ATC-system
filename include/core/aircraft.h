@@ -26,7 +26,7 @@ public:
     // Method to get current state
     AircraftState getState() const;
 
-    // Add static keyword here
+    // Static method to get status string
     static std::string getStatusString(AircraftStatus status);
 
 protected:
