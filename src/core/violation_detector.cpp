@@ -2,17 +2,19 @@
 #include "common/constants.h"
 #include "common/logger.h"
 #include <sstream>
-#include <iostream>
 #include <iomanip>
-#include <algorithm>
 #include <cmath>
+#include <algorithm>
 
 namespace atc {
 
-ViolationDetector::ViolationDetector()
+ViolationDetector::ViolationDetector(std::shared_ptr<comm::QnxChannel> channel)
     : PeriodicTask(std::chrono::milliseconds(constants::VIOLATION_CHECK_INTERVAL),
                    constants::VIOLATION_CHECK_PRIORITY)
-    , lookahead_time_seconds_(constants::DEFAULT_LOOKAHEAD_TIME) {
+    , channel_(channel)
+    , lookahead_time_seconds_(constants::DEFAULT_LOOKAHEAD_TIME)
+    , last_resolution_time_(std::chrono::steady_clock::now()) {
+
     Logger::getInstance().log("Violation detector initialized with lookahead time: " +
                             std::to_string(lookahead_time_seconds_) + " seconds");
 }
@@ -20,6 +22,8 @@ ViolationDetector::ViolationDetector()
 void ViolationDetector::addAircraft(const std::shared_ptr<Aircraft>& aircraft) {
     std::lock_guard<std::mutex> lock(mutex_);
     aircraft_.push_back(aircraft);
+    Logger::getInstance().log("Added aircraft to violation detector: " +
+                            aircraft->getState().callsign);
 }
 
 void ViolationDetector::removeAircraft(const std::string& callsign) {
@@ -30,111 +34,99 @@ void ViolationDetector::removeAircraft(const std::string& callsign) {
                 return aircraft->getState().callsign == callsign;
             }),
         aircraft_.end());
+    Logger::getInstance().log("Removed aircraft from violation detector: " + callsign);
 }
 
 void ViolationDetector::setLookaheadTime(int seconds) {
     if (seconds > 0 && seconds <= constants::MAX_LOOKAHEAD_TIME) {
         lookahead_time_seconds_ = seconds;
-        Logger::getInstance().log("Lookahead time set to: " + std::to_string(seconds) + " seconds");
-    } else {
-        Logger::getInstance().log("Invalid lookahead time: " + std::to_string(seconds));
+        Logger::getInstance().log("Updated lookahead time to: " +
+                                std::to_string(seconds) + " seconds");
     }
-}
-
-bool ViolationDetector::canIssueWarning(const std::string& ac1, const std::string& ac2) {
-    std::time_t now = std::time(nullptr);
-
-    // Always keep aircraft IDs in consistent order
-    std::string first_ac = std::min(ac1, ac2);
-    std::string second_ac = std::max(ac1, ac2);
-
-    auto it = std::find_if(warnings_.begin(), warnings_.end(),
-        [&first_ac, &second_ac](const WarningRecord& record) {
-            return record.aircraft1 == first_ac && record.aircraft2 == second_ac;
-        });
-
-    if (it != warnings_.end()) {
-        if (std::difftime(now, it->last_warning) < WARNING_COOLDOWN) {
-            return false;
-        }
-        it->last_warning = now;
-    } else {
-        warnings_.push_back({first_ac, second_ac, now});
-    }
-
-    return true;
-}
-
-void ViolationDetector::cleanupWarnings() {
-    std::time_t now = std::time(nullptr);
-    warnings_.erase(
-        std::remove_if(warnings_.begin(), warnings_.end(),
-            [now](const WarningRecord& record) {
-                return std::difftime(now, record.last_warning) > WARNING_COOLDOWN * 2;
-            }),
-        warnings_.end());
 }
 
 void ViolationDetector::execute() {
     checkViolations();
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto now = std::chrono::steady_clock::now();
+
+    while (!conflict_queue_.empty()) {
+        auto& conflict = conflict_queue_.front();
+
+        if (!conflict.resolution_attempted &&
+            std::chrono::duration_cast<std::chrono::seconds>(
+                now - conflict.detection_time).count() >= WARNING_COOLDOWN) {
+
+            handlePredictedConflict(conflict.prediction);
+            conflict.resolution_attempted = true;
+        }
+
+        if (std::chrono::duration_cast<std::chrono::seconds>(
+            now - conflict.detection_time).count() > lookahead_time_seconds_) {
+            conflict_queue_.pop();
+        } else {
+            break;
+        }
+    }
+}
+
+void ViolationDetector::handlePredictedConflict(const ViolationPrediction& prediction) {
+    std::ostringstream oss;
+
+    if (prediction.time_to_violation < 30) {
+        oss << "\nCRITICAL WARNING - Imminent Conflict\n";
+    } else if (prediction.time_to_violation < 60) {
+        oss << "\nMEDIUM WARNING - Potential Conflict\n";
+    } else {
+        oss << "\nEARLY WARNING - Monitor Situation\n";
+    }
+
+    oss << "Aircraft: " << prediction.aircraft1_id << " and "
+        << prediction.aircraft2_id << "\n"
+        << "Time to violation: " << std::fixed << std::setprecision(1)
+        << prediction.time_to_violation << " seconds\n"
+        << "Minimum separation: " << prediction.min_separation << " units\n";
+
+    Logger::getInstance().log(oss.str());
 }
 
 void ViolationDetector::checkViolations() {
     std::lock_guard<std::mutex> lock(mutex_);
-    cleanupWarnings();
-    bool critical_situation = false;
 
     for (size_t i = 0; i < aircraft_.size(); ++i) {
         for (size_t j = i + 1; j < aircraft_.size(); ++j) {
-            auto state1 = aircraft_[i]->getState();
-            auto state2 = aircraft_[j]->getState();
+            try {
+                auto state1 = aircraft_[i]->getState();
+                auto state2 = aircraft_[j]->getState();
 
-            // Calculate current separation
-            double dx = state1.position.x - state2.position.x;
-            double dy = state1.position.y - state2.position.y;
-            double dz = std::abs(state1.position.z - state2.position.z);
+                ViolationInfo current_violation;
+                if (checkPairViolation(state1, state2, current_violation)) {
+                    handleImmediateViolation(current_violation);
+                    continue;
+                }
 
-            double horizontal_separation = std::sqrt(dx * dx + dy * dy);
-            double vertical_separation = std::abs(dz);
+                auto prediction = predictViolation(state1, state2);
+                if (prediction.time_to_violation < lookahead_time_seconds_ &&
+                    prediction.min_separation < constants::MIN_HORIZONTAL_SEPARATION * EARLY_WARNING_THRESHOLD) {
 
-            // Calculate separation ratios
-            double h_ratio = horizontal_separation / constants::MIN_HORIZONTAL_SEPARATION;
-            double v_ratio = vertical_separation / constants::MIN_VERTICAL_SEPARATION;
-            double separation_ratio = std::min(h_ratio, v_ratio);
+                    auto actions = calculateResolutionActions(state1, state2, prediction);
 
-            if (separation_ratio < CRITICAL_WARNING_THRESHOLD &&
-                canIssueWarning(state1.callsign, state2.callsign)) {
+                    conflict_queue_.push({
+                        prediction,
+                        actions,
+                        std::chrono::steady_clock::now(),
+                        false
+                    });
 
-                if (separation_ratio < 1.0) {
-                    // Immediate violation
-                    ViolationInfo violation;
-                    if (checkPairViolation(state1, state2, violation)) {
-                        handleImmediateViolation(violation);
-                        critical_situation = true;
-                    }
-                } else {
-                    // Potential future violation
-                    auto prediction = predictViolation(state1, state2);
-                    if (prediction.time_to_violation < lookahead_time_seconds_) {
-                        if (separation_ratio < CRITICAL_WARNING_THRESHOLD) {
-                            handleCriticalWarning(prediction);
-                            critical_situation = true;
-                        } else if (separation_ratio < MEDIUM_WARNING_THRESHOLD) {
-                            handleMediumWarning(prediction);
-                        } else if (separation_ratio < EARLY_WARNING_THRESHOLD) {
-                            handleEarlyWarning(prediction);
-                        }
+                    if (prediction.requires_immediate_action) {
+                        executeResolutionActions(actions);
                     }
                 }
+            } catch (const std::exception& e) {
+                Logger::getInstance().log("Error checking violations: " + std::string(e.what()));
             }
         }
-    }
-
-    // Adjust update frequency based on situation
-    if (critical_situation) {
-        setPeriod(std::chrono::milliseconds(500));
-    } else {
-        setPeriod(std::chrono::milliseconds(constants::VIOLATION_CHECK_INTERVAL));
     }
 }
 
@@ -177,7 +169,6 @@ ViolationDetector::ViolationPrediction ViolationDetector::predictViolation(
     double time_to_min = calculateTimeToMinimumSeparation(state1, state2);
     prediction.time_to_violation = time_to_min;
 
-    // Calculate positions at minimum separation time
     Position pos1_future = predictPosition(state1, time_to_min);
     Position pos2_future = predictPosition(state2, time_to_min);
 
@@ -185,14 +176,15 @@ ViolationDetector::ViolationPrediction ViolationDetector::predictViolation(
     double dy = pos1_future.y - pos2_future.y;
     prediction.min_separation = std::sqrt(dx*dx + dy*dy);
 
-    // Calculate conflict point
     prediction.conflict_point = {
         (pos1_future.x + pos2_future.x) / 2,
         (pos1_future.y + pos2_future.y) / 2,
         (pos1_future.z + pos2_future.z) / 2
     };
 
-    prediction.resolution_options = generateResolutionOptions(state1, state2);
+    prediction.requires_immediate_action =
+        (prediction.time_to_violation < 30) ||
+        (prediction.min_separation < constants::MIN_HORIZONTAL_SEPARATION * IMMEDIATE_ACTION_THRESHOLD);
 
     return prediction;
 }
@@ -226,94 +218,31 @@ double ViolationDetector::calculateTimeToMinimumSeparation(
     return (time < 0.0) ? 0.0 : time;
 }
 
-std::vector<std::string> ViolationDetector::generateResolutionOptions(
-    const AircraftState& state1,
-    const AircraftState& state2) const {
-
-    std::vector<std::string> options;
-
-    // Add vertical separation options
-    double vertical_diff = state1.position.z - state2.position.z;
-    if (std::abs(vertical_diff) < constants::MIN_VERTICAL_SEPARATION * 1.5) {
-        if (vertical_diff > 0) {
-            options.push_back(state1.callsign + ": Climb 1000 feet");
-            options.push_back(state2.callsign + ": Descend 1000 feet");
-        } else {
-            options.push_back(state1.callsign + ": Descend 1000 feet");
-            options.push_back(state2.callsign + ": Climb 1000 feet");
-        }
-    }
-
-    // Add speed adjustment options
-    double speed1 = state1.getSpeed();
-    double speed2 = state2.getSpeed();
-    if (std::abs(speed1 - speed2) < 50.0) {
-        options.push_back(state1.callsign + ": Increase speed by 50 units");
-        options.push_back(state2.callsign + ": Decrease speed by 50 units");
-    }
-
-    // Add heading change options
-    double heading_diff = std::abs(state1.heading - state2.heading);
-    if (heading_diff < 45.0) {
-        options.push_back(state1.callsign + ": Turn right 30 degrees");
-        options.push_back(state2.callsign + ": Turn left 30 degrees");
-    }
-
-    return options;
-}
-
 void ViolationDetector::handleImmediateViolation(const ViolationInfo& violation) {
-    logViolation(violation);
-
     std::ostringstream oss;
     oss << "\nIMMEDIATE VIOLATION - TAKE ACTION NOW!\n"
         << "Aircraft: " << violation.aircraft1_id << " and " << violation.aircraft2_id << "\n"
         << "Current separation: \n"
         << "  Horizontal: " << std::fixed << std::setprecision(1)
         << violation.horizontal_separation << " units\n"
-        << "  Vertical: " << violation.vertical_separation << " units\n"
-        << "Required immediate actions:\n"
-        << "1. Establish vertical separation\n"
-        << "2. Turn " << violation.aircraft1_id << " right\n"
-        << "3. Turn " << violation.aircraft2_id << " left\n"
-        << "4. Increase speed differential";
+        << "  Vertical: " << violation.vertical_separation << " units\n";
 
     Logger::getInstance().log(oss.str());
-}
 
-void ViolationDetector::handleCriticalWarning(const ViolationPrediction& prediction) {
-    std::ostringstream oss;
-    oss << "\nCRITICAL WARNING - Imminent Conflict\n"
-        << "Aircraft: " << prediction.aircraft1_id << " and " << prediction.aircraft2_id << "\n"
-        << "Time to violation: " << prediction.time_to_violation << " seconds\n"
-        << "Minimum separation: " << prediction.min_separation << " units\n"
-        << "Recommended actions:";
+    // Attempt immediate resolution
+    auto state1 = std::find_if(aircraft_.begin(), aircraft_.end(),
+        [&](const auto& ac) { return ac->getState().callsign == violation.aircraft1_id; });
+    auto state2 = std::find_if(aircraft_.begin(), aircraft_.end(),
+        [&](const auto& ac) { return ac->getState().callsign == violation.aircraft2_id; });
 
-    for (const auto& option : prediction.resolution_options) {
-        oss << "\n- " << option;
+    if (state1 != aircraft_.end() && state2 != aircraft_.end()) {
+        auto actions = calculateResolutionActions(
+            (*state1)->getState(),
+            (*state2)->getState(),
+            ViolationPrediction{violation.aircraft1_id, violation.aircraft2_id, 0,
+                              violation.horizontal_separation, {}, true});
+        executeResolutionActions(actions);
     }
-
-    Logger::getInstance().log(oss.str());
-}
-
-void ViolationDetector::handleMediumWarning(const ViolationPrediction& prediction) {
-    std::ostringstream oss;
-    oss << "\nMEDIUM WARNING - Potential Conflict\n"
-        << "Aircraft: " << prediction.aircraft1_id << " and " << prediction.aircraft2_id << "\n"
-        << "Time to closest approach: " << prediction.time_to_violation << " seconds\n"
-        << "Expected minimum separation: " << prediction.min_separation << " units";
-
-    Logger::getInstance().log(oss.str());
-}
-
-void ViolationDetector::handleEarlyWarning(const ViolationPrediction& prediction) {
-    std::ostringstream oss;
-    oss << "\nEARLY WARNING - Monitor Situation\n"
-        << "Aircraft: " << prediction.aircraft1_id << " and " << prediction.aircraft2_id << "\n"
-        << "Time to closest approach: " << prediction.time_to_violation << " seconds\n"
-        << "Expected minimum separation: " << prediction.min_separation << " units";
-
-    Logger::getInstance().log(oss.str());
 }
 
 void ViolationDetector::logViolation(const ViolationInfo& violation) const {
@@ -355,15 +284,17 @@ ViolationDetector::getPredictedViolations() const {
 
     for (size_t i = 0; i < aircraft_.size(); ++i) {
         for (size_t j = i + 1; j < aircraft_.size(); ++j) {
-            auto pred = predictViolation(aircraft_[i]->getState(), aircraft_[j]->getState());
-            if (pred.time_to_violation < lookahead_time_seconds_ &&
-                pred.min_separation < constants::MIN_HORIZONTAL_SEPARATION * CRITICAL_WARNING_THRESHOLD) {
-                predictions.push_back(pred);
+            auto prediction = predictViolation(
+                aircraft_[i]->getState(),
+                aircraft_[j]->getState());
+
+            if (prediction.time_to_violation < lookahead_time_seconds_ &&
+                prediction.min_separation < constants::MIN_HORIZONTAL_SEPARATION * EARLY_WARNING_THRESHOLD) {
+                predictions.push_back(prediction);
             }
         }
     }
 
-    // Sort predictions by time to violation
     std::sort(predictions.begin(), predictions.end(),
               [](const ViolationPrediction& a, const ViolationPrediction& b) {
                   return a.time_to_violation < b.time_to_violation;
@@ -372,4 +303,4 @@ ViolationDetector::getPredictedViolations() const {
     return predictions;
 }
 
-}
+} // namespace atc
