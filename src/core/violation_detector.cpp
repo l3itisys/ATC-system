@@ -245,6 +245,93 @@ void ViolationDetector::handleImmediateViolation(const ViolationInfo& violation)
     }
 }
 
+std::vector<ViolationDetector::ResolutionAction> ViolationDetector::calculateResolutionActions(
+    const AircraftState& state1,
+    const AircraftState& state2,
+    const ViolationPrediction& prediction) {
+    
+    std::vector<ResolutionAction> actions;
+
+    // Calculate vertical separation first as it's most effective
+    double altitude_diff = std::abs(state1.position.z - state2.position.z);
+    if (altitude_diff < constants::MIN_VERTICAL_SEPARATION) {
+        // Determine which aircraft should climb/descend
+        bool state1_higher = state1.position.z > state2.position.z;
+        double climb_amount = (constants::MIN_VERTICAL_SEPARATION - altitude_diff) + 500;
+        
+        actions.push_back(ResolutionAction{
+            state1_higher ? state1.callsign : state2.callsign,
+            ResolutionAction::Type::ALTITUDE_CHANGE,
+            climb_amount,
+            prediction.requires_immediate_action
+        });
+        
+        actions.push_back(ResolutionAction{
+            state1_higher ? state2.callsign : state1.callsign,
+            ResolutionAction::Type::ALTITUDE_CHANGE,
+            -climb_amount,
+            prediction.requires_immediate_action
+        });
+    }
+
+    // If vertical separation isn't possible or as backup, adjust speeds
+    if (prediction.requires_immediate_action) {
+        double speed_diff = state1.getSpeed() - state2.getSpeed();
+        if (std::abs(speed_diff) < 50) {
+            actions.push_back(ResolutionAction{
+                state1.callsign,
+                ResolutionAction::Type::SPEED_CHANGE,
+                state1.getSpeed() * 1.1,
+                true
+            });
+            actions.push_back(ResolutionAction{
+                state2.callsign,
+                ResolutionAction::Type::SPEED_CHANGE,
+                state2.getSpeed() * 0.9,
+                true
+            });
+        }
+    }
+
+    return actions;
+}
+
+void ViolationDetector::executeResolutionActions(const std::vector<ResolutionAction>& actions) {
+    for (const auto& action : actions) {
+        sendResolutionCommand(action);
+    }
+}
+
+void ViolationDetector::sendResolutionCommand(const ResolutionAction& action) {
+    comm::CommandData cmd_data;
+    cmd_data.target_id = action.aircraft_id;
+    
+    switch (action.action_type) {
+        case ResolutionAction::Type::ALTITUDE_CHANGE:
+            cmd_data.command = "ALTITUDE";
+            cmd_data.params.push_back(std::to_string(action.value));
+            break;
+            
+        case ResolutionAction::Type::SPEED_CHANGE:
+            cmd_data.command = "SPEED";
+            cmd_data.params.push_back(std::to_string(action.value));
+            break;
+            
+        case ResolutionAction::Type::HEADING_CHANGE:
+            cmd_data.command = "HEADING";
+            cmd_data.params.push_back(std::to_string(action.value));
+            break;
+    }
+
+    comm::Message msg = comm::Message::createCommand("VIOLATION_DETECTOR", cmd_data);
+    channel_->sendMessage(msg);
+
+    std::ostringstream oss;
+    oss << "Resolution action sent for " << action.aircraft_id 
+        << ": " << cmd_data.command << " " << cmd_data.params[0];
+    Logger::getInstance().log(oss.str());
+}
+
 void ViolationDetector::logViolation(const ViolationInfo& violation) const {
     std::ostringstream oss;
     oss << "\n=== VIOLATION REPORT ===\n"
