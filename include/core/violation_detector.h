@@ -90,7 +90,7 @@ private:
     void logViolation(const ViolationInfo& violation) const;
     void sendResolutionCommand(const ResolutionAction& action);
 
-    std::mutex mutex_;
+    mutable std::mutex mutex_;
     std::vector<std::shared_ptr<Aircraft>> aircraft_;
     std::shared_ptr<comm::QnxChannel> channel_;
     std::queue<PredictedConflict> conflict_queue_;
