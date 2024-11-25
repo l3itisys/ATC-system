@@ -54,7 +54,8 @@ struct SystemMetrics {
 class ATCSystem {
 public:
     ATCSystem()
-        : violation_detector_(std::make_shared<ViolationDetector>())
+        : channel_(std::make_shared<comm::QnxChannel>("ATC_CHANNEL"))
+        , violation_detector_(std::make_shared<ViolationDetector>(channel_))
         , display_system_(std::make_shared<DisplaySystem>(violation_detector_))
         , history_logger_(std::make_shared<HistoryLogger>("atc_history.log"))
         , operator_console_(nullptr)
@@ -64,8 +65,6 @@ public:
         std::signal(SIGINT, signal_handler);
         std::signal(SIGTERM, signal_handler);
 
-        // Initialize communication channel
-        channel_ = std::make_shared<comm::QnxChannel>("ATC_CHANNEL");
         if (!channel_->initialize()) {
             Logger::getInstance().log("Failed to initialize communication channel");
             throw std::runtime_error("Failed to initialize communication channel");
