@@ -104,19 +104,6 @@ void OperatorConsole::inputThreadFunction() {
             }
             displayPrompt();
         }
-                if (!input_buffer.empty()) {
-                    input_buffer.pop_back();
-                    if (echo_enabled_) {
-                        std::cout << "\b \b" << std::flush;
-                    }
-                }
-            }
-            else if (c == 27) { // Escape sequence
-                char seq[2];
-                if (read(STDIN_FILENO, &seq[0], 1) == 1 &&
-                    read(STDIN_FILENO, &seq[1], 1) == 1) {
-                    if (seq[0] == '[') {
-                        switch (seq[1]) {
                             case 'A': // Up arrow
                                 input_buffer = getPreviousCommand();
                                 break;
