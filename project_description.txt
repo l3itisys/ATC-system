@@ -207,3 +207,63 @@ implemented ATC system. The report should also include a good summary of the res
 and the contributions made by each member of the team.
 
 
+Air Traffic Control System
+=========================
+
+A real-time air traffic control system built for QNX, designed to monitor and manage aircraft within controlled airspace.
+
+Key Features:
+------------
+- Real-time aircraft tracking and monitoring
+- Separation violation detection and prediction
+- Interactive operator console for air traffic control
+- Visual display system showing aircraft positions
+- Automated conflict resolution suggestions
+- Historical logging and replay capabilities
+
+Technical Details:
+----------------
+- Built for QNX 7.0 real-time operating system
+- C++17 with multi-threading support
+- Uses QNX message passing for inter-process communication
+- Spatial partitioning for efficient conflict detection
+- Real-time scheduling with priority-based thread management
+
+Components:
+----------
+1. Core Systems
+   - Aircraft tracking and state management
+   - Radar system simulation
+   - Violation detection and prediction
+   - Automated conflict resolution
+
+2. User Interface
+   - Text-based operator console
+   - Real-time display system
+   - Command processing system
+   - Alert management
+
+3. Data Management
+   - History logging system
+   - Performance metrics tracking
+   - System state persistence
+
+4. Communication
+   - QNX channel-based messaging
+   - Inter-process communication
+   - Real-time data distribution
+
+Build Requirements:
+-----------------
+- QNX 7.0 or later
+- CMake 3.10+
+- GTest for unit testing
+- QNX Momentics IDE (recommended)
+
+Testing:
+-------
+Comprehensive test suite including:
+- Unit tests for core components
+- Integration tests for system interaction
+- Performance tests for real-time capabilities
+- Stress tests for system stability
