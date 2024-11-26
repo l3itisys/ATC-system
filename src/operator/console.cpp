@@ -92,21 +92,27 @@ void OperatorConsole::stopInputThread() {
 }
 
 void OperatorConsole::inputThreadFunction() {
-    TerminalSettings terminal_settings;
+    struct termios term;
+    tcgetattr(STDIN_FILENO, &term);
+    term.c_lflag &= ~(ICANON | ECHO);
+    term.c_cc[VMIN] = 1;
+    term.c_cc[VTIME] = 0;
+    tcsetattr(STDIN_FILENO, TCSANOW, &term);
+
     std::string input_buffer;
     char c;
 
     while (input_running_) {
         if (read(STDIN_FILENO, &c, 1) == 1) {
-            if (c == '\n') {
+            if (c == '\r' || c == '\n') {
                 if (!input_buffer.empty()) {
+                    std::cout << "\r\n";  // QNX needs explicit carriage return
                     enqueueCommand(input_buffer);
                     addToHistory(input_buffer);
                     input_buffer.clear();
-                }
-                if (echo_enabled_) {
-                    std::cout << "\n";
-                    displayPrompt();
+                    if (echo_enabled_) {
+                        displayPrompt();
+                    }
                 }
             }
             else if (c == 127 || c == 8) { // Backspace

@@ -10,6 +10,11 @@
 namespace atc {
 
 CommandProcessor::CommandProcessor() {
+    // Set high priority for command processing
+    struct sched_param param;
+    param.sched_priority = constants::OPERATOR_PRIORITY;
+    pthread_setschedparam(pthread_self(), SCHED_RR, &param);
+    
     initializeCommandDefinitions();
 }
 
