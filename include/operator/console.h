@@ -81,11 +81,19 @@ private:
     static constexpr int INPUT_TIMEOUT_MS = 100;
     static constexpr int MAX_COMMAND_LENGTH = 256;
     static constexpr size_t MAX_HISTORY_SIZE = 50;
-    static const inline std::string PROMPT = "ATC> ";
-    static const inline std::string WELCOME_MESSAGE =
-        "\n=== Air Traffic Control System Console ===\n"
-        "Type 'HELP' for available commands\n"
-        "Type 'EXIT' to quit\n";
+
+    static std::string getPrompt() {
+        static const std::string prompt = "ATC> ";
+        return prompt;
+    }
+
+    static std::string getWelcomeMessage() {
+        static const std::string msg = 
+            "\n=== Air Traffic Control System Console ===\n"
+            "Type 'HELP' for available commands\n"
+            "Type 'EXIT' to quit\n";
+        return msg;
+    }
 
     // Input handling
     void startInputThread();

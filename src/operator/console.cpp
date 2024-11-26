@@ -151,7 +151,7 @@ void OperatorConsole::handleEscapeSequence(std::string& buffer) {
                 if (!command_history_.empty()) {
                     clearInputLine();
                     buffer = getPreviousCommand();
-                    std::cout << PROMPT << buffer;
+                    std::cout << getPrompt() << buffer;
                 }
                 break;
 
@@ -364,7 +364,7 @@ void OperatorConsole::displayWelcomeMessage() const {
 }
 
 void OperatorConsole::displayPrompt() const {
-    std::cout << PROMPT << std::flush;
+    std::cout << getPrompt() << std::flush;
 }
 
 void OperatorConsole::displayError(const std::string& error) const {
@@ -376,7 +376,7 @@ void OperatorConsole::clearScreen() const {
 }
 
 void OperatorConsole::clearInputLine() const {
-    std::cout << "\r" << std::string(PROMPT.length() + MAX_COMMAND_LENGTH, ' ') << "\r";
+    std::cout << "\r" << std::string(getPrompt().length() + MAX_COMMAND_LENGTH, ' ') << "\r";
 }
 
 void OperatorConsole::displayStatus() const {
