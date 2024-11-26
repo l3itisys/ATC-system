@@ -3,13 +3,12 @@
 
 #include "common/periodic_task.h"
 #include "common/warning_level.h"
-#include "core/violation_detector.h"
 #include "core/aircraft.h"
+#include "core/violation_detector.h"
 #include <vector>
 #include <memory>
 #include <string>
-#include <algorithm>
-#include <chrono>
+#include <queue>
 
 namespace atc {
 
@@ -22,44 +21,63 @@ public:
     void displayAlert(const std::string& message);
     void setTrackedAircraft(const std::string& callsign);
     void clearTrackedAircraft();
-    void updateDisplay();
-    void updateDisplay(const std::vector<std::shared_ptr<Aircraft>>& aircraft);
 
 protected:
     void execute() override;
 
 private:
     struct GridCell {
-        char symbol = ' ';
+        char symbol{' '};
         std::string aircraft_id;
-        bool is_predicted = false;
-        WarningLevel warning_level = WarningLevel::NONE;
-        bool has_conflict = false;
-
-        bool isEmpty() const {
-            return symbol == ' ' && !is_predicted;
-        }
+        bool is_predicted{false};
+        bool is_tracked{false};
+        bool is_emergency{false};
+        bool is_conflict_point{false};
+        WarningLevel warning_level{WarningLevel::NONE};
     };
 
-    static constexpr int GRID_WIDTH = 50;
-    static constexpr int GRID_HEIGHT = 25;
+    // Grid management
+    void initializeGrid();
+    void updateGrid();
+    void updateDisplay();
 
+    // Display methods
+    void displayGrid();
+    void displayCell(const GridCell& cell);
+    void displayHeader();
+    void displayAircraftDetails();
+    void clearScreen() const;
+
+    // Helper methods
+    WarningLevel determineWarningLevel(const AircraftState& state) const;
+    char getAircraftSymbol(const AircraftState& state) const;
+    const char* getWarningColor(WarningLevel level) const;
+    std::string formatPosition(const Position& pos) const;
+    bool isValidGridPosition(int x, int y) const;
+    void markPredictedConflictPoint(const Position& point);
+
+    // Member variables
     std::vector<std::vector<GridCell>> grid_;
     std::vector<std::shared_ptr<Aircraft>> aircraft_;
     std::shared_ptr<ViolationDetector> violation_detector_;
-    std::string current_alert_;
-    std::string tracked_aircraft_;  // Callsign of aircraft being tracked
+    std::queue<std::string> alerts_;
+    std::string tracked_aircraft_;
+    std::mutex mutex_;
 
-    void initializeGrid();
-    void updateGrid();
-    void displayGrid();
-    void displayHeader();
-    void displayAircraftDetails();
-    const char* getWarningColor(WarningLevel level) const;
-    char getDirectionSymbol(double heading) const;
-    std::string formatPosition(const Position& pos) const;
+    // Display settings
+    bool paused_{false};
+    bool show_grid_{true};
+    int refresh_rate_{5};
+    std::chrono::steady_clock::time_point last_update_;
+
+    // Constants
+    static constexpr int GRID_WIDTH = 50;
+    static constexpr int GRID_HEIGHT = 25;
+    static constexpr size_t MAX_ALERTS = 5;
+    static constexpr int MIN_REFRESH_RATE = 1;
+    static constexpr int MAX_REFRESH_RATE = 30;
 };
 
 } // namespace atc
 
-#endif
+#endif // ATC_DISPLAY_SYSTEM_H

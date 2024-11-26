@@ -1,4 +1,5 @@
 #include "common/constants.h"
+#include <string>
 
 namespace atc {
 namespace constants {
@@ -42,6 +43,9 @@ const int DISPLAY_GRID_WIDTH = 50;
 const int DISPLAY_GRID_HEIGHT = 25;
 const int DISPLAY_UPDATE_MIN_INTERVAL = 1000;
 const int DISPLAY_UPDATE_MAX_INTERVAL = 10000;
+
+// System version
+const std::string SYSTEM_VERSION = "1.0.0";
 
 } // namespace constants
 } // namespace atc

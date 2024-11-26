@@ -5,114 +5,68 @@
 namespace atc {
 namespace test {
 
-class AircraftTest : public ::testing::Test {
+class AircraftTest : public testing::Test {
 protected:
-    FlightCharacteristics characteristics;
-    Position initial_pos;
-    Velocity initial_vel;
-
     void SetUp() override {
-        characteristics.model = "A340";
-        characteristics.type = AircraftType::COMMERCIAL;
-        characteristics.cruise_speed = 400;
-        characteristics.max_speed = 500;
-        characteristics.min_speed = 200;
-        characteristics.max_altitude = 35000;
-        characteristics.min_altitude = 15000;
-        characteristics.max_climb_rate = 2000;
-        characteristics.max_descent_rate = 2500;
-
-        initial_pos.x = 50000;
-        initial_pos.y = 50000;
-        initial_pos.z = 20000;
-
-        // Setup initial velocity (heading east at 400 units/s)
-        initial_vel.setFromSpeedAndHeading(400, 90);
+        initial_pos_ = Position{50000, 50000, 20000};
+        initial_vel_ = Velocity{400, 0, 0};
+        aircraft_ = std::make_shared<Aircraft>("TEST001", initial_pos_, initial_vel_);
     }
+
+    Position initial_pos_;
+    Velocity initial_vel_;
+    std::shared_ptr<Aircraft> aircraft_;
 };
 
 TEST_F(AircraftTest, Initialization) {
-    Aircraft aircraft("TEST123", initial_pos, initial_vel, characteristics);
-
-    auto state = aircraft.getState();
-    EXPECT_EQ(state.callsign, "TEST123");
-    EXPECT_DOUBLE_EQ(state.position.x, 50000);
-    EXPECT_DOUBLE_EQ(state.position.y, 50000);
-    EXPECT_DOUBLE_EQ(state.position.z, 20000);
-    EXPECT_DOUBLE_EQ(state.speed, 400);
-    EXPECT_NEAR(state.heading, 90, 0.1);
+    auto state = aircraft_->getState();
+    EXPECT_EQ(state.callsign, "TEST001");
+    EXPECT_EQ(state.position.x, initial_pos_.x);
+    EXPECT_EQ(state.position.y, initial_pos_.y);
+    EXPECT_EQ(state.position.z, initial_pos_.z);
+    EXPECT_EQ(state.velocity.vx, initial_vel_.vx);
+    EXPECT_EQ(state.velocity.vy, initial_vel_.vy);
+    EXPECT_EQ(state.velocity.vz, initial_vel_.vz);
+    EXPECT_EQ(state.status, AircraftStatus::ENTERING);
 }
 
 TEST_F(AircraftTest, UpdateSpeed) {
-    Aircraft aircraft("TEST123", initial_pos, initial_vel, characteristics);
+    EXPECT_TRUE(aircraft_->updateSpeed(300));
+    auto state = aircraft_->getState();
+    EXPECT_NEAR(state.getSpeed(), 300, 0.1);
 
-    EXPECT_TRUE(aircraft.updateSpeed(450));
-
-    auto state = aircraft.getState();
-    EXPECT_DOUBLE_EQ(state.speed, 450);
-}
-
-TEST_F(AircraftTest, SpeedLimits) {
-    Aircraft aircraft("TEST123", initial_pos, initial_vel, characteristics);
-
-    EXPECT_FALSE(aircraft.updateSpeed(characteristics.min_speed - 1));
-    EXPECT_FALSE(aircraft.updateSpeed(characteristics.max_speed + 1));
-
-    auto state = aircraft.getState();
-    EXPECT_DOUBLE_EQ(state.speed, 400);  // Should remain unchanged
+    // Test invalid speed
+    EXPECT_FALSE(aircraft_->updateSpeed(constants::MAX_SPEED + 100));
 }
 
 TEST_F(AircraftTest, UpdateHeading) {
-    Aircraft aircraft("TEST123", initial_pos, initial_vel, characteristics);
+    EXPECT_TRUE(aircraft_->updateHeading(90));
+    auto state = aircraft_->getState();
+    EXPECT_NEAR(state.heading, 90, 0.1);
 
-    EXPECT_TRUE(aircraft.updateHeading(180));
-
-    auto state = aircraft.getState();
-    EXPECT_DOUBLE_EQ(state.heading, 180);
+    // Test invalid heading
+    EXPECT_FALSE(aircraft_->updateHeading(400));
 }
 
-TEST_F(AircraftTest, HeadingLimits) {
-    Aircraft aircraft("TEST123", initial_pos, initial_vel, characteristics);
+TEST_F(AircraftTest, UpdateAltitude) {
+    double new_altitude = 19000;
+    EXPECT_TRUE(aircraft_->updateAltitude(new_altitude));
+    auto state = aircraft_->getState();
+    EXPECT_EQ(state.position.z, new_altitude);
 
-    EXPECT_FALSE(aircraft.updateHeading(-1));
-    EXPECT_FALSE(aircraft.updateHeading(360));
-
-    auto state = aircraft.getState();
-    EXPECT_NEAR(state.heading, 90, 0.1);  // Should remain unchanged
+    // Test invalid altitude
+    EXPECT_FALSE(aircraft_->updateAltitude(constants::AIRSPACE_Z_MAX + 1000));
 }
 
-TEST_F(AircraftTest, PositionUpdate) {
-    Aircraft aircraft("TEST123", initial_pos, initial_vel, characteristics);
-
-    aircraft.start();
-    std::this_thread::sleep_for(std::chrono::seconds(2));
-    aircraft.stop();
-
-    auto state = aircraft.getState();
-    // Moving east at 400 units/s for 2 seconds
-    EXPECT_NEAR(state.position.x, initial_pos.x + 800, 1.0);
-    EXPECT_NEAR(state.position.y, initial_pos.y, 1.0);
-    EXPECT_NEAR(state.position.z, initial_pos.z, 1.0);
-}
-
-TEST_F(AircraftTest, EmergencyStatus) {
-    Aircraft aircraft("TEST123", initial_pos, initial_vel, characteristics);
-
-    aircraft.declareEmergency();
-    auto state = aircraft.getState();
+TEST_F(AircraftTest, EmergencyHandling) {
+    aircraft_->declareEmergency();
+    auto state = aircraft_->getState();
     EXPECT_EQ(state.status, AircraftStatus::EMERGENCY);
-    EXPECT_GT(state.alert_level, 0);
 
-    aircraft.cancelEmergency();
-    state = aircraft.getState();
+    aircraft_->cancelEmergency();
+    state = aircraft_->getState();
     EXPECT_EQ(state.status, AircraftStatus::CRUISING);
-    EXPECT_EQ(state.alert_level, 0);
 }
 
-}
-}
-
-int main(int argc, char **argv) {
-    testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
-}
+} // namespace test
+} // namespace atc

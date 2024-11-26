@@ -10,13 +10,11 @@ namespace comm {
 class IChannel {
 public:
     virtual ~IChannel() = default;
-
-    virtual bool initialize() = 0;
+    virtual bool initialize(bool as_server) = 0;  // Changed this signature
     virtual bool sendMessage(const Message& message) = 0;
     virtual bool receiveMessage(Message& message, int timeout_ms) = 0;
 };
 
 }
 }
-
 #endif // ATC_CHANNEL_H

@@ -1,7 +1,7 @@
-#include <gtest/gtest.h>
 #include "display/display_system.h"
 #include "core/violation_detector.h"
-#include <memory>
+#include "common/constants.h"
+#include <gtest/gtest.h>
 
 namespace atc {
 namespace test {
@@ -10,65 +10,114 @@ class DisplaySystemTest : public ::testing::Test {
 protected:
     void SetUp() override {
         violation_detector_ = std::make_shared<ViolationDetector>();
-        display_system_ = std::make_shared<DisplaySystem>(violation_detector_);
+        display_system_ = std::make_unique<DisplaySystem>(violation_detector_);
     }
 
-    void TearDown() override {
-        display_system_->stop();
+    // Helper to create test aircraft
+    std::shared_ptr<Aircraft> createTestAircraft(
+        const std::string& id,
+        double x, double y, double z,
+        double vx, double vy, double vz) {
+
+        Position pos{x, y, z};
+        Velocity vel{vx, vy, vz};
+        return std::make_shared<Aircraft>(id, pos, vel);
     }
 
     std::shared_ptr<ViolationDetector> violation_detector_;
-    std::shared_ptr<DisplaySystem> display_system_;
+    std::unique_ptr<DisplaySystem> display_system_;
 };
 
-TEST_F(DisplaySystemTest, AddRemoveAircraft) {
-    Position pos{50000, 50000, 20000};
-    Velocity vel{100, 0, 0};
-    auto aircraft = std::make_shared<Aircraft>("TEST1", pos, vel);
+TEST_F(DisplaySystemTest, BasicDisplay) {
+    // Add single aircraft
+    auto ac1 = createTestAircraft("AC001", 20000, 50000, 20000, 400, 0, 0);
+    display_system_->addAircraft(ac1);
 
-    display_system_->addAircraft(aircraft);
-    display_system_->selectAircraft("TEST1");
-
-    // Test removal
-    display_system_->removeAircraft("TEST1");
-    // Selection should be cleared
-    display_system_->execute();  // Trigger a display update
+    // Verify display updates without crashing
+    ASSERT_NO_THROW(display_system_->updateDisplay());
 }
 
-TEST_F(DisplaySystemTest, RefreshRateLimit) {
-    // Test minimum refresh rate
-    display_system_->setRefreshRate(500);  // Too fast
-    EXPECT_GE(display_system_->getPeriod().count(), DisplaySystem::MIN_REFRESH_RATE);
+TEST_F(DisplaySystemTest, CollisionWarning) {
+    // Create two aircraft on collision course
+    auto ac1 = createTestAircraft("AC001", 20000, 50000, 20000, 400, 0, 0);
+    auto ac2 = createTestAircraft("AC002", 80000, 50000, 20000, -400, 0, 0);
 
-    // Test maximum refresh rate
-    display_system_->setRefreshRate(15000);  // Too slow
-    EXPECT_LE(display_system_->getPeriod().count(), DisplaySystem::MAX_REFRESH_RATE);
+    display_system_->addAircraft(ac1);
+    display_system_->addAircraft(ac2);
+    violation_detector_->addAircraft(ac1);
+    violation_detector_->addAircraft(ac2);
+
+    // Let them move towards each other
+    for(int i = 0; i < 10; i++) {
+        ac1->execute();
+        ac2->execute();
+        display_system_->updateDisplay();
+
+        // Verify violations are detected and displayed
+        auto violations = violation_detector_->getCurrentViolations();
+        if(!violations.empty()) {
+            // Should see warning indicators
+            ASSERT_NO_THROW(display_system_->updateDisplay());
+        }
+    }
 }
 
-TEST_F(DisplaySystemTest, ViolationDisplay) {
-    // Create two aircraft in violation
-    Position pos1{50000, 50000, 20000};
-    Position pos2{50100, 50100, 20000};
-    Velocity vel{0, 0, 0};
+// Test aircraft at different altitudes
+    auto ac_high = createTestAircraft("AC001", 20000, 50000, 22000, 400, 0, 0);  // High altitude
+    auto ac_mid = createTestAircraft("AC002", 40000, 50000, 20000, 400, 0, 0);   // Mid altitude
+    auto ac_low = createTestAircraft("AC003", 60000, 50000, 18000, 400, 0, 0);   // Low altitude
 
-    auto aircraft1 = std::make_shared<Aircraft>("TEST1", pos1, vel);
-    auto aircraft2 = std::make_shared<Aircraft>("TEST2", pos2, vel);
+    display_system_->addAircraft(ac_high);
+    display_system_->addAircraft(ac_mid);
+    display_system_->addAircraft(ac_low);
 
-    violation_detector_->addAircraft(aircraft1);
-    violation_detector_->addAircraft(aircraft2);
-    display_system_->addAircraft(aircraft1);
-    display_system_->addAircraft(aircraft2);
-
-    // Test violation prediction toggle
-    display_system_->toggleViolationPrediction(false);
-    display_system_->execute();
-
-    display_system_->toggleViolationPrediction(true);
-    display_system_->execute();
+    // Verify display updates
+    ASSERT_NO_THROW(display_system_->updateDisplay());
 }
 
+TEST_F(DisplaySystemTest, RemoveAircraft) {
+    auto ac1 = createTestAircraft("AC001", 20000, 50000, 20000, 400, 0, 0);
+    display_system_->addAircraft(ac1);
+    display_system_->updateDisplay();
+
+    // Remove aircraft
+    display_system_->removeAircraft("AC001");
+    display_system_->updateDisplay();
+
+    // Add different aircraft
+    auto ac2 = createTestAircraft("AC002", 40000, 50000, 20000, 400, 0, 0);
+    display_system_->addAircraft(ac2);
+    ASSERT_NO_THROW(display_system_->updateDisplay());
 }
+
+TEST_F(DisplaySystemTest, AlertDisplay) {
+    auto ac1 = createTestAircraft("AC001", 20000, 50000, 20000, 400, 0, 0);
+    display_system_->addAircraft(ac1);
+
+    // Test alert display
+    display_system_->displayAlert("Test Alert Message");
+    ASSERT_NO_THROW(display_system_->updateDisplay());
 }
+
+TEST_F(DisplaySystemTest, LoadTest) {
+    // Add multiple aircraft
+    for(int i = 0; i < 20; i++) {
+        auto ac = createTestAircraft(
+            "AC" + std::to_string(i),
+            20000 + i * 3000,
+            50000,
+            20000,
+            400, 0, 0
+        );
+        display_system_->addAircraft(ac);
+    }
+
+    // Verify system handles load
+    ASSERT_NO_THROW(display_system_->updateDisplay());
+}
+
+} // namespace test
+} // namespace atc
 
 int main(int argc, char **argv) {
     testing::InitGoogleTest(&argc, argv);

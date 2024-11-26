@@ -3,25 +3,28 @@
 #include <iostream>
 #include <iomanip>
 #include <sstream>
-#include <algorithm>
 
 namespace atc {
 
-// Define display constants if not in constants.h
-namespace {
-    constexpr int DISPLAY_UPDATE_MS = 5000;  // 5 seconds
-    constexpr int DISPLAY_PRIORITY = 14;     // Lower than critical components
-}
-
 DisplaySystem::DisplaySystem(std::shared_ptr<ViolationDetector> violation_detector)
-    : PeriodicTask(std::chrono::milliseconds(DISPLAY_UPDATE_MS),
-                   DISPLAY_PRIORITY)
-    , violation_detector_(violation_detector) {
+    : PeriodicTask(std::chrono::milliseconds(1000), 10)  // 1 second base period, low priority
+    , violation_detector_(violation_detector)
+    , paused_(false)
+    , show_grid_(true)
+    , refresh_rate_(5)
+    , last_update_(std::chrono::steady_clock::now()) {
     initializeGrid();
 }
 
 void DisplaySystem::execute() {
-    updateDisplay();
+    if (paused_) return;
+
+    auto now = std::chrono::steady_clock::now();
+    if (std::chrono::duration_cast<std::chrono::seconds>(
+        now - last_update_).count() >= refresh_rate_) {
+        updateDisplay();
+        last_update_ = now;
+    }
 }
 
 void DisplaySystem::initializeGrid() {
@@ -35,18 +38,7 @@ void DisplaySystem::initializeGrid() {
 }
 
 void DisplaySystem::updateDisplay() {
-    updateGrid();
-    displayGrid();
-}
-
-void DisplaySystem::updateDisplay(const std::vector<std::shared_ptr<Aircraft>>& aircraft) {
-    // Update aircraft list and ensure it's copied properly
-    {
-        aircraft_.clear();  // Clear existing list
-        aircraft_.insert(aircraft_.end(), aircraft.begin(), aircraft.end());  // Copy new aircraft
-    }
-
-    // Update and show the display
+    std::lock_guard<std::mutex> lock(mutex_);
     updateGrid();
     displayGrid();
 }
@@ -54,209 +46,140 @@ void DisplaySystem::updateDisplay(const std::vector<std::shared_ptr<Aircraft>>& 
 void DisplaySystem::updateGrid() {
     initializeGrid();  // Clear previous state
 
-    // Get current violations
-    std::vector<ViolationInfo> violations;
-    if (violation_detector_) {
-        violations = violation_detector_->getCurrentViolations();
-    }
-
-    // Update grid with aircraft positions
     for (const auto& aircraft : aircraft_) {
         if (!aircraft) continue;
 
         auto state = aircraft->getState();
+        auto pos = state.position;
 
-        // Convert coordinates to grid position
-        int x = static_cast<int>((state.position.x - constants::AIRSPACE_X_MIN) *
-            (GRID_WIDTH - 1) / (constants::AIRSPACE_X_MAX - constants::AIRSPACE_X_MIN));
-        int y = GRID_HEIGHT - 1 - static_cast<int>((state.position.y - constants::AIRSPACE_Y_MIN) *
-            (GRID_HEIGHT - 1) / (constants::AIRSPACE_Y_MAX - constants::AIRSPACE_Y_MIN));
+        // Convert position to grid coordinates
+        int x = static_cast<int>((pos.x / constants::AIRSPACE_X_MAX) * GRID_WIDTH);
+        int y = static_cast<int>((pos.y / constants::AIRSPACE_Y_MAX) * GRID_HEIGHT);
 
-        if (x >= 0 && x < GRID_WIDTH && y >= 0 && y < GRID_HEIGHT) {
+        if (isValidGridPosition(x, y)) {
             auto& cell = grid_[y][x];
-            cell.symbol = state.callsign[0];  // First letter of callsign
             cell.aircraft_id = state.callsign;
-
-            // Check for violations
-            for (const auto& violation : violations) {
-                if (violation.aircraft1_id == state.callsign ||
-                    violation.aircraft2_id == state.callsign) {
-                    cell.warning_level = WarningLevel::VIOLATION;
-                    cell.has_conflict = true;
-                    break;
-                }
-            }
-
-            // Add directional indicator based on heading
-            char direction = getDirectionSymbol(state.heading);
-            if (direction != cell.symbol) {
-                cell.symbol = direction;
-            }
+            cell.is_tracked = (state.callsign == tracked_aircraft_);
+            cell.warning_level = determineWarningLevel(state);
+            cell.is_emergency = (state.status == AircraftStatus::EMERGENCY);
+            cell.symbol = getAircraftSymbol(state);
         }
     }
 }
 
 void DisplaySystem::displayGrid() {
-    // Clear screen
-    std::cout << "\033[2J\033[H";
-
-    // Display header
+    clearScreen();
     displayHeader();
 
     // Display grid
-    std::cout << "+";
-    for (int i = 0; i < GRID_WIDTH * 2; i++) std::cout << "-";
-    std::cout << "+\n";
-
     for (const auto& row : grid_) {
-        std::cout << "|";
         for (const auto& cell : row) {
-            if (cell.symbol != ' ') {
-                if (cell.has_conflict) {
-                    std::cout << "\033[31m" << "[" << cell.symbol << "]" << "\033[0m";
-                } else {
-                    const char* color = getWarningColor(cell.warning_level);
-                    // Add altitude indicator: H(high), M(mid), L(low)
-                    char alt_indicator = 'M';
-                    // Get aircraft state to determine altitude
-                    for (const auto& aircraft : aircraft_) {
-                        if (aircraft && aircraft->getState().callsign == cell.aircraft_id) {
-                            double altitude = aircraft->getState().position.z;
-                            if (altitude > 21000) alt_indicator = 'H';
-                            else if (altitude < 18000) alt_indicator = 'L';
-                            break;
-                        }
-                    }
-                    std::cout << color << alt_indicator << cell.symbol << "\033[0m";
-                }
-            } else {
-                std::cout << "  ";
-            }
+            displayCell(cell);
         }
-        std::cout << "|\n";
+        std::cout << '\n';
     }
-
-    std::cout << "+";
-    for (int i = 0; i < GRID_WIDTH * 2; i++) std::cout << "-";
-    std::cout << "+\n";
 
     displayAircraftDetails();
-
-    if (!current_alert_.empty()) {
-        std::cout << "\n\033[31m" << current_alert_ << "\033[0m\n";
-    }
 }
 
-char DisplaySystem::getDirectionSymbol(double heading) const {
-    // Use more intuitive directional symbols
-    const char symbols[] = {'N', 'E', 'S', 'W'};
-    int index = static_cast<int>((heading + 45.0) / 90.0) % 4;
-    return symbols[index];
+void DisplaySystem::displayCell(const GridCell& cell) {
+    const char* color = getWarningColor(cell.warning_level);
+
+    std::cout << color;
+    if (cell.is_conflict_point) {
+        std::cout << 'X';
+    } else if (cell.is_emergency) {
+        std::cout << '!';
+    } else {
+        std::cout << cell.symbol;
+    }
+    std::cout << "\033[0m";  // Reset color
 }
 
 void DisplaySystem::displayHeader() {
-    auto now = std::chrono::system_clock::now();
-    auto time = std::chrono::system_clock::to_time_t(now);
+    std::cout << "\033[2J\033[H";  // Clear screen and move to top
+    std::cout << "=== Air Traffic Control Display ===\n";
+    std::cout << "Aircraft: " << aircraft_.size();
 
-    std::cout << "\033[1m=== Air Traffic Control Display ===\033[0m\n"
-              << "Time: " << std::put_time(std::localtime(&time), "%c") << "\n"
-              << "Active Aircraft: " << aircraft_.size() << " | "
-              << "Separation Violations: " <<
-                 (violation_detector_ ? violation_detector_->getCurrentViolations().size() : 0) << "\n"
-              << "Legend: H/M/L=Alt | N/E/S/W=Dir | [\033[31mX\033[0m]=Conflict\n"
-              << std::string(50, '-') << "\n";
-}
+    if (violation_detector_) {
+        std::cout << "\nRefresh Rate: " << refresh_rate_ << "s"
+                  << " | Display Mode: " << (show_grid_ ? "Grid" : "List")
+                  << " | Status: " << (paused_ ? "PAUSED" : "ACTIVE") << "\n";
+    }
 
-void DisplaySystem::setTrackedAircraft(const std::string& callsign) {
-    tracked_aircraft_ = callsign;
-}
-
-void DisplaySystem::clearTrackedAircraft() {
-    tracked_aircraft_.clear();
+    std::cout << std::string(GRID_WIDTH * 2, '-') << "\n";
 }
 
 void DisplaySystem::displayAircraftDetails() {
-    if (aircraft_.empty()) return;
-
-    // First display tracked aircraft if any
-    if (!tracked_aircraft_.empty()) {
-        auto tracked = std::find_if(aircraft_.begin(), aircraft_.end(),
-            [this](const auto& ac) {
-                return ac && ac->getState().callsign == tracked_aircraft_;
-            });
-        
-        if (tracked != aircraft_.end()) {
-            const auto& state = (*tracked)->getState();
-            std::cout << "\nTracked Aircraft Details:\n"
-                     << std::string(50, '-') << "\n"
-                     << "ID: " << state.callsign << "\n"
-                     << "Flight Level: " << static_cast<int>(state.position.z/100) << "\n"
-                     << "Speed: " << static_cast<int>(state.getSpeed()) << " units/s\n"
-                     << "Heading: " << static_cast<int>(state.heading) << "°\n"
-                     << "Position: " << formatPosition(state.position) << "\n"
-                     << "Status: " << Aircraft::getStatusString(state.status) << "\n"
-                     << std::string(50, '-') << "\n";
-        }
-    }
-
-    std::cout << "\nAircraft Details:\n" << std::string(70, '-') << "\n"
-              << std::setw(8) << "ID"
-              << std::setw(10) << "Alt(FL)"
-              << std::setw(8) << "Speed"
-              << std::setw(8) << "Hdg"
-              << std::setw(15) << "Position"
-              << std::setw(12) << "Status"
-              << "\n" << std::string(70, '-') << "\n";
+    std::cout << "\nAircraft Details:\n";
+    std::cout << std::string(50, '-') << '\n';
 
     for (const auto& aircraft : aircraft_) {
         if (!aircraft) continue;
 
-        const auto& state = aircraft->getState();
-        const char* color = "\033[0m";
-
-        if (violation_detector_) {
-            auto violations = violation_detector_->getCurrentViolations();
-            for (const auto& v : violations) {
-                if (v.aircraft1_id == state.callsign || v.aircraft2_id == state.callsign) {
-                    color = "\033[31m";
-                    break;
-                }
-            }
-        }
+        auto state = aircraft->getState();
+        const char* color = getWarningColor(determineWarningLevel(state));
 
         std::cout << color
-                  << std::setw(8) << state.callsign
-                  << std::setw(10) << static_cast<int>(state.position.z/100)
-                  << std::setw(8) << static_cast<int>(state.getSpeed())
-                  << std::setw(8) << static_cast<int>(state.heading)
+                  << std::setw(10) << state.callsign
                   << std::setw(15) << formatPosition(state.position)
-                  << std::setw(12) << Aircraft::getStatusString(state.status)
+                  << std::setw(8) << static_cast<int>(state.getSpeed())
                   << "\033[0m\n";
     }
 }
 
-std::string DisplaySystem::formatPosition(const Position& pos) const {
-    std::ostringstream oss;
-    oss << "(" << std::setw(3) << static_cast<int>(pos.x/1000) << ","
-        << std::setw(3) << static_cast<int>(pos.y/1000) << ")";
-    return oss.str();
-}
-
 const char* DisplaySystem::getWarningColor(WarningLevel level) const {
     switch (level) {
-        case WarningLevel::VIOLATION: return "\033[31m";  // Red
-        case WarningLevel::CRITICAL: return "\033[33m";   // Yellow
-        case WarningLevel::WARNING: return "\033[36m";    // Cyan
-        default: return "\033[0m";                        // Reset
+        case WarningLevel::VIOLATION: return "\033[1;31m";  // Bright red
+        case WarningLevel::CRITICAL:  return "\033[31m";    // Red
+        case WarningLevel::WARNING:   return "\033[33m";    // Yellow
+        default:                      return "\033[0m";     // Reset
     }
+}
+
+std::string DisplaySystem::formatPosition(const Position& pos) const {
+    std::stringstream ss;
+    ss << std::fixed << std::setprecision(1)
+       << "(" << pos.x/1000 << "," << pos.y/1000 << "," << pos.z/1000 << ")";
+    return ss.str();
+}
+
+char DisplaySystem::getAircraftSymbol(const AircraftState& state) const {
+    double heading = state.heading;
+    if (heading < 45 || heading >= 315) return '^';      // North
+    if (heading >= 45 && heading < 135) return '>';      // East
+    if (heading >= 135 && heading < 225) return 'v';     // South
+    return '<';                                          // West
+}
+
+bool DisplaySystem::isValidGridPosition(int x, int y) const {
+    return x >= 0 && x < GRID_WIDTH && y >= 0 && y < GRID_HEIGHT;
+}
+
+void DisplaySystem::markPredictedConflictPoint(const Position& point) {
+    int x = static_cast<int>((point.x / constants::AIRSPACE_X_MAX) * GRID_WIDTH);
+    int y = static_cast<int>((point.y / constants::AIRSPACE_Y_MAX) * GRID_HEIGHT);
+
+    if (isValidGridPosition(x, y)) {
+        grid_[y][x].is_conflict_point = true;
+    }
+}
+
+WarningLevel DisplaySystem::determineWarningLevel(const AircraftState& state) const {
+    if (state.status == AircraftStatus::EMERGENCY) {
+        return WarningLevel::VIOLATION;
+    }
+    return WarningLevel::NONE;
 }
 
 void DisplaySystem::addAircraft(const std::shared_ptr<Aircraft>& aircraft) {
     if (!aircraft) return;
+    std::lock_guard<std::mutex> lock(mutex_);
     aircraft_.push_back(aircraft);
 }
 
 void DisplaySystem::removeAircraft(const std::string& callsign) {
+    std::lock_guard<std::mutex> lock(mutex_);
     aircraft_.erase(
         std::remove_if(aircraft_.begin(), aircraft_.end(),
             [&callsign](const auto& ac) {
@@ -266,7 +189,25 @@ void DisplaySystem::removeAircraft(const std::string& callsign) {
 }
 
 void DisplaySystem::displayAlert(const std::string& message) {
-    current_alert_ = message;
+    std::lock_guard<std::mutex> lock(mutex_);
+    alerts_.push(message);
+    if (alerts_.size() > MAX_ALERTS) {
+        alerts_.pop();
+    }
+}
+
+void DisplaySystem::setTrackedAircraft(const std::string& callsign) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    tracked_aircraft_ = callsign;
+}
+
+void DisplaySystem::clearTrackedAircraft() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    tracked_aircraft_.clear();
+}
+
+void DisplaySystem::clearScreen() const {
+    std::cout << "\033[2J\033[H";  // ANSI escape codes to clear screen and move cursor to top
 }
 
 } // namespace atc

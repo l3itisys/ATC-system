@@ -101,25 +101,11 @@ void RadarSystem::performSecondaryInterrogation() {
     std::lock_guard<std::mutex> lock(radar_mutex_);
     secondary_scan_count_++;
 
-    for (const auto& aircraft : aircraft_) {
-        try {
-            auto state = aircraft->getState();
-            auto& track = tracks_[state.callsign];
+    for (const auto& track_pair : tracks_) {
+        const auto& callsign = track_pair.first;
+        auto& track = track_pair.second;
 
-            // Update track with precise information from transponder
-            track.state = state;
-            track.has_transponder_response = true;
-            track.last_update = std::chrono::steady_clock::now();
-            track.track_quality = 100;  // Full confidence with transponder data
-        } catch (const std::exception& e) {
-            Logger::getInstance().log("Error in secondary radar interrogation: " +
-                                    std::string(e.what()));
-        }
-    }
-
-    // Send radar update message through communication channel
-    if (channel_) {
-        for (const auto& [callsign, track] : tracks_) {
+        if (channel_) {
             comm::Message msg = comm::Message::createPositionUpdate(
                 "RADAR", track.state);
             channel_->sendMessage(msg);
@@ -131,18 +117,18 @@ void RadarSystem::updateTracks() {
     std::lock_guard<std::mutex> lock(radar_mutex_);
     track_updates_++;
 
-    for (auto& [callsign, track] : tracks_) {
+    for (auto& track_pair : tracks_) {
+        auto& track = track_pair.second;
         auto now = std::chrono::steady_clock::now();
         auto age = std::chrono::duration_cast<std::chrono::milliseconds>(
             now - track.last_update).count();
 
-        // Degrade track quality over time
-        if (age > 1000) {  // More than 1 second old
+        if (age > 1000) {
             track.track_quality = std::max(0, track.track_quality - 5);
         }
     }
 
-    if (track_updates_ % 10 == 0) {  // Log every 10th update
+    if (track_updates_ % 10 == 0) {
         logTrackUpdates();
     }
 }
@@ -172,13 +158,16 @@ bool RadarSystem::validateRadarReturn(const Position& pos) const {
 
 void RadarSystem::logTrackUpdates() const {
     std::ostringstream oss;
-    oss << "\n=== Radar Track Update #" << track_updates_ << " ===\n"
+    oss << "\nRadar Track Update #" << track_updates_ << "\n"
         << "Active Tracks: " << tracks_.size() << "\n"
         << "Primary Scans: " << primary_scan_count_ << "\n"
         << "Secondary Interrogations: " << secondary_scan_count_ << "\n\n"
         << "Track Details:\n";
 
-    for (const auto& [callsign, track] : tracks_) {
+    for (const auto& track_pair : tracks_) {
+        const auto& callsign = track_pair.first;
+        const auto& track = track_pair.second;
+
         oss << "Aircraft: " << callsign << "\n"
             << "  Position: ("
             << std::fixed << std::setprecision(1)
@@ -198,7 +187,8 @@ std::vector<AircraftState> RadarSystem::getTrackedAircraft() const {
     std::vector<AircraftState> states;
     states.reserve(tracks_.size());
 
-    for (const auto& [_, track] : tracks_) {
+    for (const auto& track_pair : tracks_) {
+        const auto& track = track_pair.second;
         if (track.track_quality >= MIN_TRACK_QUALITY) {
             states.push_back(track.state);
         }

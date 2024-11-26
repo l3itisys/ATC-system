@@ -23,6 +23,7 @@ set(CORE_SOURCES
     src/core/aircraft.cpp
     src/core/radar_system.cpp
     src/core/violation_detector.cpp
+    src/main_system.cpp
 )
 
 set(DISPLAY_SOURCES
@@ -62,3 +63,4 @@ target_link_libraries(atc_system PRIVATE Threads::Threads)
 if(CMAKE_SYSTEM_NAME MATCHES "QNX")
     target_link_libraries(atc_system PRIVATE socket)
 endif()
+

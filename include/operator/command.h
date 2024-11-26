@@ -13,7 +13,7 @@ namespace atc {
 class CommandProcessor {
 public:
     CommandProcessor();
-    ~CommandProcessor() = default;
+    ~CommandProcessor();
 
     struct ParsedCommand {
         std::string command;
@@ -24,11 +24,11 @@ public:
     struct CommandResult {
         bool success;
         std::string message;
-        comm::Message msg;  // Changed from optional to direct Message
-        bool has_message;   // Flag to indicate if message is valid
+        comm::Message msg;      // Message to send if has_message is true
+        bool has_message;       // Flag to indicate if msg is valid
 
         CommandResult(bool s = false, const std::string& msg_str = "",
-                     const comm::Message& message = comm::Message())
+                      const comm::Message& message = comm::Message())
             : success(s)
             , message(msg_str)
             , msg(message)
@@ -36,7 +36,7 @@ public:
     };
 
     // Command processing
-    CommandResult processCommand(const std::string& command_line);
+    CommandResult processCommand(const std::string& command);
     std::string getHelpText() const;
     std::string getCommandHelp(const std::string& command) const;
 
@@ -62,7 +62,6 @@ private:
     CommandResult handleStatusCommand(const ParsedCommand& cmd);
     CommandResult handleHelpCommand(const ParsedCommand& cmd);
     CommandResult handleTrackCommand(const ParsedCommand& cmd);
-    CommandResult handleDisplayCommand(const ParsedCommand& cmd);
 
     // Helper methods
     void initializeCommandDefinitions();
@@ -92,3 +91,4 @@ private:
 } // namespace atc
 
 #endif // ATC_COMMAND_PROCESSOR_H
+

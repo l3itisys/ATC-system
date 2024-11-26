@@ -3,15 +3,11 @@
 
 #include "common/periodic_task.h"
 #include "common/types.h"
-#include "common/constants.h"
-#include "core/aircraft.h"
 #include "communication/qnx_channel.h"
 #include <vector>
 #include <memory>
 #include <mutex>
 #include <chrono>
-#include <unordered_map>
-#include <algorithm>
 
 namespace atc {
 
@@ -31,6 +27,7 @@ public:
         Position conflict_point;
         bool requires_immediate_action;
         std::chrono::steady_clock::time_point detection_time;
+
         bool isValid() const {
             return !aircraft1_id.empty() && !aircraft2_id.empty() &&
                    time_to_violation >= 0 && min_separation >= 0;
@@ -49,14 +46,10 @@ public:
         bool is_mandatory;
         double confidence;
         std::string description;
+
         bool isValid() const {
             return !aircraft_id.empty() && confidence >= 0 && confidence <= 1;
         }
-    };
-
-    struct Metrics {
-        size_t violation_checks_count{0};
-        size_t violations_detected{0};
     };
 
     explicit ViolationDetector(std::shared_ptr<comm::QnxChannel> channel);
@@ -66,7 +59,6 @@ public:
     void removeAircraft(const std::string& callsign);
     bool hasActiveViolations() const;
     int getActiveAircraftCount() const;
-    Metrics getMetrics() const;
 
 protected:
     void execute() override;
@@ -75,13 +67,16 @@ private:
     void checkViolations();
     void handleImmediateViolation(const ViolationInfo& violation);
     void handlePredictedConflict(const ViolationPrediction& prediction);
+
+    // Resolution calculation
     std::vector<ResolutionAction> calculateResolutionActions(const ViolationPrediction& prediction);
     void executeResolutionAction(const ResolutionAction& action);
     bool validateResolutionAction(const ResolutionAction& action) const;
+
+    // Prediction helpers
     ViolationPrediction predictViolation(const AircraftState& state1,
                                        const AircraftState& state2) const;
-    Position predictPosition(const AircraftState& state,
-                           double time_seconds) const;
+    Position predictPosition(const AircraftState& state, double time_seconds) const;
     double calculateTimeToMinimumSeparation(const AircraftState& state1,
                                           const AircraftState& state2) const;
     bool checkPairViolation(const AircraftState& state1,
@@ -89,12 +84,11 @@ private:
                            ViolationInfo& violation) const;
     bool validatePrediction(const ViolationPrediction& prediction) const;
 
+    // Data members
     std::vector<std::shared_ptr<Aircraft>> aircraft_;
     std::shared_ptr<comm::QnxChannel> channel_;
     std::unordered_map<std::string, std::chrono::steady_clock::time_point> last_warning_times_;
     mutable std::mutex mutex_;
-    size_t violation_checks_count_{0};
-    size_t violations_detected_{0};
 };
 
 } // namespace atc

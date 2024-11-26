@@ -1,6 +1,8 @@
 #ifndef ATC_CONSTANTS_H
 #define ATC_CONSTANTS_H
 
+#include <string>
+
 namespace atc {
 namespace constants {
 
@@ -44,7 +46,11 @@ extern const int DISPLAY_GRID_HEIGHT;
 extern const int DISPLAY_UPDATE_MIN_INTERVAL;  // Minimum refresh interval (1s)
 extern const int DISPLAY_UPDATE_MAX_INTERVAL;  // Maximum refresh interval (10s)
 
+// System version
+extern const std::string SYSTEM_VERSION;
+
 } // namespace constants
 } // namespace atc
 
 #endif // ATC_CONSTANTS_H
+
