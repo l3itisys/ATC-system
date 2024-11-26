@@ -141,9 +141,9 @@ void DisplaySystem::displayGrid() {
 }
 
 char DisplaySystem::getDirectionSymbol(double heading) const {
-    // Use ASCII characters instead of Unicode for QNX compatibility
-    const char symbols[] = {'^', '/', '>', '\\', 'v', '/', '<', '\\'};
-    int index = static_cast<int>((heading + 22.5) / 45.0) % 8;
+    // Use more intuitive directional symbols
+    const char symbols[] = {'N', 'E', 'S', 'W'};
+    int index = static_cast<int>((heading + 45.0) / 90.0) % 4;
     return symbols[index];
 }
 
