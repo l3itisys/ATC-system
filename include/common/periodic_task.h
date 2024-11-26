@@ -7,6 +7,9 @@
 #include <errno.h>
 #include <unistd.h>
 #include <inttypes.h>
+#include <thread>
+#include <atomic>
+#include <mutex>
 #include <chrono>
 #include <thread>
 #include <atomic>
@@ -87,12 +90,15 @@ private:
             // Calculate sleep time
             auto end = std::chrono::steady_clock::now();
             auto sleep_time = start + current_period - end;
-            auto sleep_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(sleep_time);
-
-            if (sleep_ns.count() > 0) {
-                // Convert sleep time to nanoseconds for QNX TimerTimeout
-                uint64_t timeout_ns = sleep_ns.count();
-                TimerTimeout(CLOCK_REALTIME, _NTO_TIMEOUT_RECEIVE, NULL, &timeout_ns, NULL);
+            if (sleep_time.count() > 0) {
+                struct timespec ts;
+                auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(sleep_time);
+                ts.tv_sec = ns.count() / 1000000000;
+                ts.tv_nsec = ns.count() % 1000000000;
+                
+                // Use QNX timer_timeout
+                uint64_t timeout_ns = ts.tv_sec * 1000000000ULL + ts.tv_nsec;
+                TimerTimeout(CLOCK_REALTIME, _NTO_TIMEOUT_RECEIVE, nullptr, &timeout_ns, nullptr);
             }
         }
     }
