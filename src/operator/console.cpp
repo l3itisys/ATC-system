@@ -104,7 +104,6 @@ void OperatorConsole::inputThreadFunction() {
             }
             displayPrompt();
         }
-            else if (c == 127 || c == 8) { // Backspace
                 if (!input_buffer.empty()) {
                     input_buffer.pop_back();
                     if (echo_enabled_) {
