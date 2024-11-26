@@ -5,7 +5,10 @@
 #include <thread>
 #include <atomic>
 #include <mutex>
+#include <time.h>
+#include <errno.h>
 #include <sys/neutrino.h>
+#include <sys/syspage.h>
 
 namespace atc {
 
@@ -78,11 +81,20 @@ private:
                 current_period = period_;
             }
 
-            // Sleep for remaining time in period
+            // Calculate sleep time
             auto end = std::chrono::steady_clock::now();
-            auto next_period = start + current_period;
-            if (next_period > end) {
-                std::this_thread::sleep_until(next_period);
+            auto sleep_time = start + current_period - end;
+            auto sleep_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(sleep_time);
+
+            if (sleep_ns.count() > 0) {
+                struct timespec ts;
+                ts.tv_sec = sleep_ns.count() / 1000000000;
+                ts.tv_nsec = sleep_ns.count() % 1000000000;
+                
+                while (nanosleep(&ts, &ts) == -1 && errno == EINTR) {
+                    // Handle interruption and continue sleeping
+                    continue;
+                }
             }
         }
     }
