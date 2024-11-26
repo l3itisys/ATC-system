@@ -10,6 +10,7 @@
 #include <atomic>
 #include <mutex>
 #include <chrono>
+#include <sys/syspage.h>
 
 namespace atc {
 
@@ -88,9 +89,11 @@ private:
             if (sleep_time.count() > 0) {
                 auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(sleep_time);
                 uint64_t nsec = ns.count();
+                struct sigevent event;
+                SIGEV_UNBLOCK_INIT(&event);
                 
-                // Use QNX delay with proper uint64_t timing
-                TimerTimeout(CLOCK_REALTIME, _NTO_TIMEOUT_SEND, NULL, &nsec, NULL);
+                // Use QNX timer with proper event structure
+                TimerTimeout(CLOCK_REALTIME, _NTO_TIMEOUT_SEND, &event, &nsec, NULL);
             }
         }
     }
