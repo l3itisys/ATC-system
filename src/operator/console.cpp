@@ -104,20 +104,6 @@ void OperatorConsole::inputThreadFunction() {
             }
             displayPrompt();
         }
-                            case 'A': // Up arrow
-                                input_buffer = getPreviousCommand();
-                                break;
-                            case 'B': // Down arrow
-                                input_buffer = getNextCommand();
-                                break;
-                        }
-                        if (echo_enabled_) {
-                            clearInputLine();
-                            displayPrompt();
-                            std::cout << input_buffer << std::flush;
-                        }
-                    }
-                }
     }
 }
 
