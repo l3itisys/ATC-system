@@ -4,38 +4,19 @@
 #include <iostream>
 #include <sstream>
 #include <iomanip>
-#include <algorithm>
-#include <chrono>
-#include <ctime>
 #include <termios.h>
 #include <unistd.h>
 #include <sys/ioctl.h>
 
 namespace atc {
 
-const std::string HELP_TEXT = R"(
-Available Air Traffic Control Commands:
-----------------------------------------
-SPEED <id> <value>  - Change aircraft speed (150-500 units)
-ALT <id> <value>    - Change aircraft altitude (15000-25000 feet)
-HDG <id> <value>    - Change aircraft heading (0-359 degrees)
-STATUS             - Display system status
-TRACK <id>         - Focus on specific aircraft
-PAUSE              - Pause display updates
-RESUME             - Resume display updates
-DISPLAY <rate>     - Set display refresh rate (2-30 seconds)
-CLEAR              - Clear screen
-HELP               - Show this help message
-EXIT               - Exit system
-
-Example: ALT AC001 20000
-)";
-
-// Terminal settings helper class
 class TerminalSettings {
 public:
     TerminalSettings() {
+        // Save current terminal settings
         tcgetattr(STDIN_FILENO, &original_settings_);
+
+        // Configure terminal for immediate input without echo
         termios new_settings = original_settings_;
         new_settings.c_lflag &= ~(ICANON | ECHO);
         new_settings.c_cc[VMIN] = 1;
@@ -44,6 +25,7 @@ public:
     }
 
     ~TerminalSettings() {
+        // Restore original terminal settings
         tcsetattr(STDIN_FILENO, TCSANOW, &original_settings_);
     }
 
@@ -59,14 +41,21 @@ OperatorConsole::OperatorConsole(std::shared_ptr<comm::QnxChannel> channel)
     , operational_(false)
     , processed_commands_(0)
     , echo_enabled_(true)
-    , history_index_(0) {
+    , history_index_(0)
+    , performance_() {
 
     if (!channel_) {
         throw std::runtime_error("Invalid communication channel");
     }
 
+    // Register message handlers
+    registerMessageHandlers();
+
+    // Start input processing
     startInputThread();
     operational_ = true;
+
+    // Display welcome message
     displayWelcomeMessage();
     Logger::getInstance().log("Operator console initialized");
 }
@@ -75,10 +64,23 @@ OperatorConsole::~OperatorConsole() {
     stopInputThread();
 }
 
+void OperatorConsole::registerMessageHandlers() {
+    channel_->registerHandler(comm::MessageType::STATUS_RESPONSE,
+        [this](const comm::Message& msg) {
+            handleStatusResponse(msg);
+        });
+
+    channel_->registerHandler(comm::MessageType::ALERT,
+        [this](const comm::Message& msg) {
+            handleAlert(msg);
+        });
+}
+
 void OperatorConsole::startInputThread() {
     input_running_ = true;
     input_thread_ = std::thread(&OperatorConsole::inputThreadFunction, this);
 
+    // Set thread priority
     struct sched_param param;
     param.sched_priority = constants::OPERATOR_PRIORITY;
     pthread_setschedparam(input_thread_.native_handle(), SCHED_RR, &param);
@@ -92,108 +94,173 @@ void OperatorConsole::stopInputThread() {
 }
 
 void OperatorConsole::inputThreadFunction() {
+    TerminalSettings terminal_settings;
     std::string input_buffer;
     displayPrompt();
 
     while (input_running_) {
-        std::string line;
-        if (std::getline(std::cin, line)) {
-            if (!line.empty()) {
-                enqueueCommand(line);
-                addToHistory(line);
+        char c;
+        if (read(STDIN_FILENO, &c, 1) == 1) {
+            handleKeypress(c, input_buffer);
+        }
+    }
+}
+
+void OperatorConsole::handleKeypress(char c, std::string& buffer) {
+    switch (c) {
+        case '\n':  // Enter key
+            if (!buffer.empty()) {
+                std::cout << '\n';
+                enqueueCommand(buffer);
+                addToHistory(buffer);
+                buffer.clear();
             }
             displayPrompt();
+            break;
+
+        case '\x7f':  // Backspace
+            if (!buffer.empty()) {
+                buffer.pop_back();
+                std::cout << "\b \b";
+            }
+            break;
+
+        case '\x1b':  // Escape sequence
+            handleEscapeSequence(buffer);
+            break;
+
+        default:
+            if (std::isprint(c)) {
+                buffer += c;
+                if (echo_enabled_) {
+                    std::cout << c;
+                }
+            }
+            break;
+    }
+    std::cout.flush();
+}
+
+void OperatorConsole::handleEscapeSequence(std::string& buffer) {
+    char seq[2];
+    if (read(STDIN_FILENO, seq, 2) != 2) return;
+
+    if (seq[0] == '[') {
+        switch (seq[1]) {
+            case 'A':  // Up arrow
+                if (!command_history_.empty()) {
+                    clearInputLine();
+                    buffer = getPreviousCommand();
+                    std::cout << PROMPT << buffer;
+                }
+                break;
+
+            case 'B':  // Down arrow
+                clearInputLine();
+                buffer = getNextCommand();
+                std::cout << PROMPT << buffer;
+                break;
+
+            case 'C':  // Right arrow
+                // Cursor movement could be implemented here
+                break;
+
+            case 'D':  // Left arrow
+                // Cursor movement could be implemented here
+                break;
         }
     }
 }
 
 void OperatorConsole::execute() {
-    while (hasCommands()) {
-        processNextCommand();
+    processMessages();
+    processCommandQueue();
+}
+
+void OperatorConsole::processMessages() {
+    comm::Message msg;
+    while (channel_->receiveMessage(msg, 0)) {  // Non-blocking receive
+        try {
+            switch (msg.type) {
+                case comm::MessageType::STATUS_RESPONSE:
+                    handleStatusResponse(msg);
+                    break;
+
+                case comm::MessageType::ALERT:
+                    handleAlert(msg);
+                    break;
+
+                default:
+                    Logger::getInstance().log("Received unknown message type from " +
+                                           msg.sender_id);
+                    break;
+            }
+        } catch (const std::exception& e) {
+            Logger::getInstance().log("Error processing message: " + std::string(e.what()));
+        }
     }
 }
 
-void OperatorConsole::processNextCommand() {
-    std::string command = dequeueCommand();
-    if (command.empty()) return;
+void OperatorConsole::handleStatusResponse(const comm::Message& msg) {
+    try {
+        const auto& status = std::get<comm::StatusResponse>(msg.payload);
+        std::cout << "\n" << status.status_text << "\n";
+        displayPrompt();
+    } catch (const std::exception& e) {
+        Logger::getInstance().log("Error handling status response: " + std::string(e.what()));
+    }
+}
 
+void OperatorConsole::handleAlert(const comm::Message& msg) {
+    try {
+        const auto& alert = std::get<comm::AlertData>(msg.payload);
+
+        // Clear current line
+        clearInputLine();
+
+        // Display alert with appropriate color based on level
+        std::string color;
+        switch (alert.level) {
+            case comm::alerts::LEVEL_EMERGENCY:
+                color = "\033[1;31m";  // Bright red
+                break;
+            case comm::alerts::LEVEL_CRITICAL:
+                color = "\033[31m";    // Red
+                break;
+            case comm::alerts::LEVEL_WARNING:
+                color = "\033[33m";    // Yellow
+                break;
+            default:
+                color = "\033[36m";    // Cyan
+        }
+
+        std::cout << "\n" << color << "ALERT: " << alert.description << "\033[0m\n";
+        displayPrompt();
+    } catch (const std::exception& e) {
+        Logger::getInstance().log("Error handling alert: " + std::string(e.what()));
+    }
+}
+
+void OperatorConsole::processCommandQueue() {
+    while (hasCommands()) {
+        auto command = dequeueCommand();
+        if (!command.empty()) {
+            processCommand(command);
+        }
+    }
+}
+
+void OperatorConsole::processCommand(const std::string& command) {
     auto start_time = std::chrono::steady_clock::now();
 
     try {
-        std::istringstream iss(command);
-        std::vector<std::string> tokens;
-        std::string token;
-        while (iss >> token) {
-            tokens.push_back(token);
-        }
-
-        if (tokens.empty()) return;
-
-        std::string cmd = tokens[0];
-        std::transform(cmd.begin(), cmd.end(), cmd.begin(), ::toupper);
-
-        // Handle basic commands
-        if (cmd == "HELP") {
-            std::cout << HELP_TEXT << std::endl;
-            return;
-        }
-        else if (cmd == "CLEAR") {
-            clearScreen();
-            displayWelcomeMessage();
-            return;
-        }
-        else if (cmd == "EXIT") {
-            operational_ = false;
-            std::cout << "Shutting down ATC system..." << std::endl;
-            return;
-        }
-        else if (cmd == "STATUS") {
-            displayStatus();
-            return;
-        }
-        else if (cmd == "PAUSE") {
-            if (channel_) {
-                comm::CommandData cmd_data("SYSTEM", "PAUSE");
-                channel_->sendMessage(comm::Message::createCommand("OPERATOR", cmd_data));
-                std::cout << "Display updates paused. Type 'RESUME' to continue." << std::endl;
-            }
-            return;
-        }
-        else if (cmd == "RESUME") {
-            if (channel_) {
-                comm::CommandData cmd_data("SYSTEM", "RESUME");
-                channel_->sendMessage(comm::Message::createCommand("OPERATOR", cmd_data));
-                std::cout << "Display updates resumed." << std::endl;
-            }
-            return;
-        }
-        else if (cmd == "DISPLAY" && tokens.size() > 1) {
-            try {
-                int rate = std::stoi(tokens[1]);
-                if (rate >= 2 && rate <= 30) {
-                    if (channel_) {
-                        comm::CommandData cmd_data("SYSTEM", "DISPLAY_RATE");
-                        cmd_data.params.push_back(tokens[1]);
-                        channel_->sendMessage(comm::Message::createCommand("OPERATOR", cmd_data));
-                        std::cout << "Display refresh rate set to " << rate << " seconds." << std::endl;
-                    }
-                } else {
-                    std::cout << "Error: Display rate must be between 2 and 30 seconds." << std::endl;
-                }
-            } catch (...) {
-                std::cout << "Error: Invalid display rate value." << std::endl;
-            }
-            return;
-        }
-
-        // Process command using command processor
         auto result = command_processor_->processCommand(command);
         if (result.success) {
             if (result.response) {
                 channel_->sendMessage(*result.response);
             }
             if (!result.message.empty()) {
-                std::cout << result.message << std::endl;
+                std::cout << result.message << "\n";
             }
         } else {
             displayError(result.message);
@@ -204,12 +271,9 @@ void OperatorConsole::processNextCommand() {
     }
     catch (const std::exception& e) {
         displayError("Command processing error: " + std::string(e.what()));
-        Logger::getInstance().log("Command processing error: " + std::string(e.what()));
     }
 
-    if (echo_enabled_) {
-        displayPrompt();
-    }
+    displayPrompt();
 }
 
 void OperatorConsole::enqueueCommand(const std::string& command) {
@@ -250,14 +314,16 @@ std::string OperatorConsole::getPreviousCommand() {
 
 std::string OperatorConsole::getNextCommand() {
     if (command_history_.empty() || history_index_ >= command_history_.size()) {
-        history_index_ = command_history_.size();
         return "";
     }
     history_index_++;
-    return history_index_ < command_history_.size() ? command_history_[history_index_] : "";
+    return history_index_ < command_history_.size() ?
+           command_history_[history_index_] : "";
 }
 
-void OperatorConsole::updatePerformanceMetrics(const std::chrono::steady_clock::time_point& start_time) {
+void OperatorConsole::updatePerformanceMetrics(
+    const std::chrono::steady_clock::time_point& start_time) {
+
     auto end_time = std::chrono::steady_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
         end_time - start_time).count();
@@ -265,6 +331,7 @@ void OperatorConsole::updatePerformanceMetrics(const std::chrono::steady_clock::
     performance_.average_processing_time_ms =
         (performance_.average_processing_time_ms * performance_.command_count + duration) /
         (performance_.command_count + 1);
+
     performance_.command_count++;
     performance_.last_command_time = end_time;
 
@@ -282,29 +349,30 @@ void OperatorConsole::logPerformanceStats() const {
     oss << "Operator Console Performance:\n"
         << "  Commands Processed: " << performance_.command_count << "\n"
         << "  Average Processing Time: " << std::fixed << std::setprecision(2)
-        << performance_.average_processing_time_ms << "ms";
+        << performance_.average_processing_time_ms << "ms\n"
+        << "  System Uptime: " << getSystemUptime() << "s";
     Logger::getInstance().log(oss.str());
 }
 
-void OperatorConsole::setEchoEnabled(bool enable) {
-    echo_enabled_ = enable;
-}
-
-void OperatorConsole::clearScreen() const {
-    std::cout << "\033[2J\033[H" << std::flush;
+void OperatorConsole::displayWelcomeMessage() const {
+    clearScreen();
+    std::cout << "\n=== Air Traffic Control System Console ===\n"
+              << "Version: " << constants::SYSTEM_VERSION << "\n"
+              << "Type 'HELP' for available commands\n"
+              << "Type 'EXIT' to quit\n"
+              << std::string(50, '=') << "\n\n";
 }
 
 void OperatorConsole::displayPrompt() const {
-    std::cout << "\r" << PROMPT << std::flush;
-}
-
-void OperatorConsole::displayWelcomeMessage() const {
-    std::cout << WELCOME_MESSAGE << std::endl;
-    displayPrompt();
+    std::cout << PROMPT << std::flush;
 }
 
 void OperatorConsole::displayError(const std::string& error) const {
-    std::cout << "\033[31mError: " << error << "\033[0m" << std::endl;
+    std::cout << "\033[31mError: " << error << "\033[0m\n";
+}
+
+void OperatorConsole::clearScreen() const {
+    std::cout << "\033[2J\033[H" << std::flush;  // ANSI escape codes
 }
 
 void OperatorConsole::clearInputLine() const {
@@ -313,16 +381,37 @@ void OperatorConsole::clearInputLine() const {
 
 void OperatorConsole::displayStatus() const {
     clearScreen();
+
+    auto now = std::chrono::system_clock::now();
+    auto time = std::chrono::system_clock::to_time_t(now);
+
     std::cout << "\n=== ATC System Status ===\n"
-              << "Active Aircraft: " << getActiveAircraftCount() << "\n"
-              << "Commands Processed: " << processed_commands_ << "\n"
-              << "Queue Size: " << getCommandQueueSize() << "\n"
+              << "Time: " << std::put_time(std::localtime(&time), "%Y-%m-%d %H:%M:%S") << "\n"
               << "System Uptime: " << getSystemUptime() << " seconds\n"
-              << "Average Command Processing Time: " << std::fixed << std::setprecision(2)
-              << performance_.average_processing_time_ms << "ms\n"
-              << "\nType 'HELP' for available commands\n"
-              << std::string(50, '-') << "\n";
-    displayPrompt();
+              << "Commands Processed: " << processed_commands_ << "\n"
+              << "Current Queue Size: " << getCommandQueueSize() << "\n"
+              << "Average Processing Time: " << std::fixed << std::setprecision(2)
+              << performance_.average_processing_time_ms << "ms\n\n"
+              << "Command History Size: " << command_history_.size() << "\n"
+              << "Last Command Time: ";
+
+    if (performance_.last_command_time.time_since_epoch().count() > 0) {
+        auto last_cmd_time = std::chrono::system_clock::to_time_t(
+            std::chrono::system_clock::now() +
+            (performance_.last_command_time - std::chrono::steady_clock::now()));
+        std::cout << std::put_time(std::localtime(&last_cmd_time), "%H:%M:%S");
+    } else {
+        std::cout << "None";
+    }
+
+    std::cout << "\n\nType 'HELP' for available commands\n"
+              << std::string(50, '=') << "\n";
+}
+
+void OperatorConsole::setEchoEnabled(bool enable) {
+    echo_enabled_ = enable;
+    Logger::getInstance().log(std::string("Command echo ") +
+                            (enable ? "enabled" : "disabled"));
 }
 
 bool OperatorConsole::hasCommands() const {
@@ -341,9 +430,127 @@ long OperatorConsole::getSystemUptime() const {
         now - system_start_time_).count();
 }
 
-int OperatorConsole::getActiveAircraftCount() const {
-    // This should be implemented to return the actual count from your system
-    return 4; // Temporary hardcoded value
+void OperatorConsole::handleSystemSignal(int signal) {
+    switch (signal) {
+        case SIGINT:
+        case SIGTERM:
+            Logger::getInstance().log("Received termination signal");
+            operational_ = false;
+            break;
+
+        case SIGUSR1:
+            // Could be used for custom signal handling
+            Logger::getInstance().log("Received user signal 1");
+            break;
+
+        default:
+            Logger::getInstance().log("Received unhandled signal: " +
+                                    std::to_string(signal));
+    }
+}
+
+void OperatorConsole::handleWindowResize() {
+    struct winsize w;
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) != -1) {
+        // Update display dimensions if needed
+        terminal_width_ = w.ws_col;
+        terminal_height_ = w.ws_row;
+
+        // Refresh display
+        clearScreen();
+        displayStatus();
+    }
+}
+
+bool OperatorConsole::validateCommand(const std::string& command, std::string& error) const {
+    if (command.empty()) {
+        error = "Empty command";
+        return false;
+    }
+
+    // Check for maximum command length
+    if (command.length() > MAX_COMMAND_LENGTH) {
+        error = "Command too long";
+        return false;
+    }
+
+    // Check for invalid characters
+    if (std::any_of(command.begin(), command.end(),
+        [](char c) { return !std::isprint(c); })) {
+        error = "Command contains invalid characters";
+        return false;
+    }
+
+    return true;
+}
+
+void OperatorConsole::logCommand(const std::string& command, bool success) const {
+    auto now = std::chrono::system_clock::now();
+    auto time = std::chrono::system_clock::to_time_t(now);
+
+    std::ostringstream oss;
+    oss << "Command executed at "
+        << std::put_time(std::localtime(&time), "%Y-%m-%d %H:%M:%S")
+        << " [" << (success ? "SUCCESS" : "FAILED") << "]: " << command;
+
+    Logger::getInstance().log(oss.str());
+}
+
+bool OperatorConsole::isOperational() const {
+    return operational_;
+}
+
+const std::string& OperatorConsole::getLastError() const {
+    return last_error_;
+}
+
+void OperatorConsole::setLastError(const std::string& error) {
+    last_error_ = error;
+    Logger::getInstance().log("Error: " + error);
+}
+
+void OperatorConsole::registerCustomHandler(const std::string& command,
+                                          CommandHandler handler) {
+    std::lock_guard<std::mutex> lock(handlers_mutex_);
+    custom_handlers_[command] = handler;
+    Logger::getInstance().log("Registered custom handler for command: " + command);
+}
+
+void OperatorConsole::unregisterCustomHandler(const std::string& command) {
+    std::lock_guard<std::mutex> lock(handlers_mutex_);
+    custom_handlers_.erase(command);
+    Logger::getInstance().log("Unregistered custom handler for command: " + command);
+}
+
+std::vector<std::string> OperatorConsole::getCommandHistory() const {
+    std::lock_guard<std::mutex> lock(history_mutex_);
+    return command_history_;
+}
+
+void OperatorConsole::clearCommandHistory() {
+    std::lock_guard<std::mutex> lock(history_mutex_);
+    command_history_.clear();
+    history_index_ = 0;
+    Logger::getInstance().log("Command history cleared");
+}
+
+OperatorConsole::Performance OperatorConsole::getPerformanceMetrics() const {
+    return performance_;
+}
+
+void OperatorConsole::resetPerformanceMetrics() {
+    performance_ = Performance();
+    Logger::getInstance().log("Performance metrics reset");
+}
+
+std::string OperatorConsole::formatTimestamp(
+    const std::chrono::steady_clock::time_point& time_point) const {
+
+    auto now = std::chrono::system_clock::now();
+    auto time = std::chrono::system_clock::to_time_t(now);
+    std::stringstream ss;
+    ss << std::put_time(std::localtime(&time), "%Y-%m-%d %H:%M:%S");
+    return ss.str();
 }
 
 } // namespace atc
