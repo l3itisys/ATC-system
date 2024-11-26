@@ -15,6 +15,12 @@ public:
     CommandProcessor();
     ~CommandProcessor() = default;
 
+    struct ParsedCommand {
+        std::string command;
+        std::string aircraft_id;
+        std::vector<std::string> parameters;
+    };
+
     struct CommandResult {
         bool success;
         std::string message;
@@ -39,12 +45,6 @@ private:
         std::string syntax;
         std::string description;
         std::vector<std::string> examples;
-    };
-
-    struct ParsedCommand {
-        std::string command;
-        std::string aircraft_id;
-        std::vector<std::string> parameters;
     };
 
     struct CommandDefinition {
