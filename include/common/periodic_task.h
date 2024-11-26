@@ -1,16 +1,15 @@
 #ifndef ATC_PERIODIC_TASK_H
 #define ATC_PERIODIC_TASK_H
 
+#include <sys/neutrino.h>
+#include <sys/syspage.h>
+#include <time.h>
+#include <errno.h>
+#include <unistd.h>
 #include <chrono>
 #include <thread>
 #include <atomic>
 #include <mutex>
-#include <time.h>
-#include <errno.h>
-#include <unistd.h>
-#include <sys/neutrino.h>
-#include <sys/syspage.h>
-#include <time.h>
 
 namespace atc {
 
@@ -94,7 +93,8 @@ private:
                 ts.tv_nsec = sleep_ns.count() % 1000000000;
                 
                 // Use QNX delay() function which is more reliable than nanosleep
-                delay((ts.tv_sec * 1000) + (ts.tv_nsec / 1000000));
+                int ms = (ts.tv_sec * 1000) + (ts.tv_nsec / 1000000);
+                delay(ms);
             }
         }
     }
