@@ -11,6 +11,7 @@
 #include <mutex>
 #include <chrono>
 #include <sys/syspage.h>
+#include <signal.h>
 
 namespace atc {
 
@@ -89,11 +90,20 @@ private:
             if (sleep_time.count() > 0) {
                 auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(sleep_time);
                 uint64_t nsec = ns.count();
-                struct sigevent event;
-                SIGEV_UNBLOCK_INIT(&event);
                 
-                // Use QNX timer with proper event structure
-                TimerTimeout(CLOCK_REALTIME, _NTO_TIMEOUT_SEND, &event, &nsec, NULL);
+                // Initialize timer event structure for QNX
+                struct sigevent event;
+                SIGEV_PULSE_INIT(&event, ConnectAttach(0, 0, 0, 0, 0), SIGEV_PULSE_PRIO_INHERIT, 0, 0);
+                
+                // Use QNX timer with initialized event structure
+                timer_t timer_id;
+                struct itimerspec its = {{0, 0}, {0, static_cast<long>(nsec)}};
+                
+                if (timer_create(CLOCK_REALTIME, &event, &timer_id) == 0) {
+                    timer_settime(timer_id, 0, &its, nullptr);
+                    pause();  // Wait for timer
+                    timer_delete(timer_id);
+                }
             }
         }
     }
