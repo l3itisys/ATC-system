@@ -7,6 +7,7 @@
 #include <mutex>
 #include <time.h>
 #include <errno.h>
+#include <unistd.h>
 #include <sys/neutrino.h>
 #include <sys/syspage.h>
 
