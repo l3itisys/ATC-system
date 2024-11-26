@@ -156,8 +156,7 @@ void DisplaySystem::displayHeader() {
               << "Active Aircraft: " << aircraft_.size() << " | "
               << "Separation Violations: " <<
                  (violation_detector_ ? violation_detector_->getCurrentViolations().size() : 0) << "\n"
-              << "Legend: [A/a] Aircraft (High/Low) | [^v<>] Direction | "
-              << "[\033[31m!\033[0m] Violation\n"
+              << "Legend: H/M/L=Alt | N/E/S/W=Dir | [\033[31mX\033[0m]=Conflict\n"
               << std::string(50, '-') << "\n";
 }
 
