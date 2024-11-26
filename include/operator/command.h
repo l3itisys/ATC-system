@@ -66,6 +66,7 @@ private:
     CommandResult handleEmergencyCommand(const ParsedCommand& cmd);
     CommandResult handleStatusCommand(const ParsedCommand& cmd);
     CommandResult handleHelpCommand(const ParsedCommand& cmd);
+    CommandResult handleTrackCommand(const ParsedCommand& cmd);
 
     // Validation helpers
     bool validateAltitude(double altitude) const;

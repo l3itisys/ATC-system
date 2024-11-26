@@ -20,6 +20,8 @@ public:
     void addAircraft(const std::shared_ptr<Aircraft>& aircraft);
     void removeAircraft(const std::string& callsign);
     void displayAlert(const std::string& message);
+    void setTrackedAircraft(const std::string& callsign);
+    void clearTrackedAircraft();
     void updateDisplay();
     void updateDisplay(const std::vector<std::shared_ptr<Aircraft>>& aircraft);
 
@@ -46,6 +48,7 @@ private:
     std::vector<std::shared_ptr<Aircraft>> aircraft_;
     std::shared_ptr<ViolationDetector> violation_detector_;
     std::string current_alert_;
+    std::string tracked_aircraft_;  // Callsign of aircraft being tracked
 
     void initializeGrid();
     void updateGrid();

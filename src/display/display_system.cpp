@@ -157,8 +157,37 @@ void DisplaySystem::displayHeader() {
               << std::string(50, '-') << "\n";
 }
 
+void DisplaySystem::setTrackedAircraft(const std::string& callsign) {
+    tracked_aircraft_ = callsign;
+}
+
+void DisplaySystem::clearTrackedAircraft() {
+    tracked_aircraft_.clear();
+}
+
 void DisplaySystem::displayAircraftDetails() {
     if (aircraft_.empty()) return;
+
+    // First display tracked aircraft if any
+    if (!tracked_aircraft_.empty()) {
+        auto tracked = std::find_if(aircraft_.begin(), aircraft_.end(),
+            [this](const auto& ac) {
+                return ac && ac->getState().callsign == tracked_aircraft_;
+            });
+        
+        if (tracked != aircraft_.end()) {
+            const auto& state = (*tracked)->getState();
+            std::cout << "\nTracked Aircraft Details:\n"
+                     << std::string(50, '-') << "\n"
+                     << "ID: " << state.callsign << "\n"
+                     << "Flight Level: " << static_cast<int>(state.position.z/100) << "\n"
+                     << "Speed: " << static_cast<int>(state.getSpeed()) << " units/s\n"
+                     << "Heading: " << static_cast<int>(state.heading) << "°\n"
+                     << "Position: " << formatPosition(state.position) << "\n"
+                     << "Status: " << Aircraft::getStatusString(state.status) << "\n"
+                     << std::string(50, '-') << "\n";
+        }
+    }
 
     std::cout << "\nAircraft Details:\n" << std::string(70, '-') << "\n"
               << std::setw(8) << "ID"

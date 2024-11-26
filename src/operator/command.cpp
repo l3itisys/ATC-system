@@ -84,6 +84,15 @@ void CommandProcessor::initializeCommandDefinitions() {
         0, 1
     );
 
+    // Add track command
+    command_definitions_["TRACK"] = createDef(
+        [](CommandProcessor* self, const ParsedCommand& cmd) { return self->handleTrackCommand(cmd); },
+        "TRACK <aircraft_id>",
+        "Display detailed information for specific aircraft",
+        {"TRACK AC001"},
+        1, 1
+    );
+
     // Add help command
     command_definitions_["HELP"] = createDef(
         [](CommandProcessor* self, const ParsedCommand& cmd) { return self->handleHelpCommand(cmd); },
@@ -329,6 +338,16 @@ CommandProcessor::CommandResult CommandProcessor::handleHelpCommand(const Parsed
     }
 
     return CommandResult{true, getCommandHelp(command), std::nullopt};
+}
+
+CommandProcessor::CommandResult CommandProcessor::handleTrackCommand(const ParsedCommand& cmd) {
+    if (!validateAircraftId(cmd.aircraft_id)) {
+        return CommandResult{false, ERR_INVALID_AIRCRAFT_ID, std::nullopt};
+    }
+
+    comm::CommandData cmd_data(cmd.aircraft_id, "TRACK");
+    return CommandResult{true, "Tracking aircraft " + cmd.aircraft_id,
+            comm::Message::createCommand("OPERATOR", cmd_data)};
 }
 
 std::string CommandProcessor::getHelpText() const {
