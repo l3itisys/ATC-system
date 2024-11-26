@@ -10,6 +10,7 @@
 #include <unistd.h>
 #include <sys/neutrino.h>
 #include <sys/syspage.h>
+#include <time.h>
 
 namespace atc {
 
@@ -92,10 +93,8 @@ private:
                 ts.tv_sec = sleep_ns.count() / 1000000000;
                 ts.tv_nsec = sleep_ns.count() % 1000000000;
                 
-                while (nanosleep(&ts, &ts) == -1 && errno == EINTR) {
-                    // Handle interruption and continue sleeping
-                    continue;
-                }
+                // Use QNX delay() function which is more reliable than nanosleep
+                delay((ts.tv_sec * 1000) + (ts.tv_nsec / 1000000));
             }
         }
     }
