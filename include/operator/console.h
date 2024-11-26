@@ -13,8 +13,11 @@
 #include <condition_variable>
 #include <atomic>
 #include <chrono>
+#include <functional>
 
 namespace atc {
+
+using CommandHandler = std::function<void(const std::string&)>;
 
 class OperatorConsole : public PeriodicTask {
 public:
@@ -38,11 +41,41 @@ public:
     bool isOperational() const { return operational_; }
     size_t getCommandQueueSize() const;
     size_t getProcessedCommandCount() const { return processed_commands_; }
+    const std::string& getLastError() const;
+    std::vector<std::string> getCommandHistory() const;
+    Performance getPerformanceMetrics() const;
 
 protected:
     void execute() override;
 
 private:
+    // Message handling
+    void registerMessageHandlers();
+    void handleStatusResponse(const comm::Message& msg);
+    void handleAlert(const comm::Message& msg);
+    void processMessages();
+
+    // Command processing
+    void processCommandQueue();
+    void processCommand(const std::string& command);
+    bool validateCommand(const std::string& command, std::string& error) const;
+    void logCommand(const std::string& command, bool success) const;
+
+    // Input handling
+    void handleKeypress(char c, std::string& buffer);
+    void handleEscapeSequence(std::string& buffer);
+    void handleSystemSignal(int signal);
+    void handleWindowResize();
+
+    // Custom handlers
+    void registerCustomHandler(const std::string& command, CommandHandler handler);
+    void unregisterCustomHandler(const std::string& command);
+
+    // Performance management
+    void resetPerformanceMetrics();
+    std::string formatTimestamp(const std::chrono::steady_clock::time_point& time_point) const;
+    void setLastError(const std::string& error);
+    void clearCommandHistory();
     // Constants
     static constexpr size_t MAX_QUEUE_SIZE = 100;
     static constexpr int INPUT_TIMEOUT_MS = 100;
