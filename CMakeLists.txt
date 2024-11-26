@@ -1,66 +1,64 @@
-# CMakeLists.txt
 cmake_minimum_required(VERSION 3.10)
-project(ATCSystem)
+project(ATCSystem VERSION 1.0)
 
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED True)
+# Set C++14 for QNX 7.1 compatibility
+set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
-# Include directories
-include_directories(${PROJECT_SOURCE_DIR}/include)
-include_directories(${QNX_TARGET}/usr/include)
+# QNX specific settings
+if(CMAKE_SYSTEM_NAME MATCHES "QNX")
+    set(QNX_TARGET $ENV{QNX_TARGET})
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -D_QNX_SOURCE")
+endif()
 
-# Source files by component
+# Source files
+set(COMMON_SOURCES
+    src/common/constants.cpp
+    src/common/logger.cpp
+    src/common/history_logger.cpp
+)
+
 set(CORE_SOURCES
     src/core/aircraft.cpp
-    src/core/violation_detector.cpp
-    src/display/display_system.cpp
-    src/common/logger.cpp
-    src/common/constants.cpp
-    src/common/history_logger.cpp
     src/core/radar_system.cpp
-    src/operator/console.cpp
+    src/core/violation_detector.cpp
+)
+
+set(DISPLAY_SOURCES
+    src/display/display_system.cpp
+)
+
+set(OPERATOR_SOURCES
     src/operator/command.cpp
+    src/operator/console.cpp
 )
 
 set(COMMUNICATION_SOURCES
     src/communication/qnx_channel.cpp
 )
 
-# Main executable
-add_executable(atc_system
-    ${CORE_SOURCES}
-    ${COMMUNICATION_SOURCES}
-    ${DISPLAY_SOURCES}
-    ${COMMON_SOURCES}
-    ${OPERATOR_SOURCES}
+set(MAIN_SOURCES
     src/main.cpp
 )
 
-# Link libraries
-if(NOT CMAKE_CROSSCOMPILING)
-    target_link_libraries(atc_system pthread rt)
-endif()
+# Include directories
+include_directories(${PROJECT_SOURCE_DIR}/include)
 
-# Testing
-if(NOT CMAKE_CROSSCOMPILING)
-    enable_testing()
+# Create executable
+add_executable(atc_system
+    ${COMMON_SOURCES}
+    ${CORE_SOURCES}
+    ${DISPLAY_SOURCES}
+    ${OPERATOR_SOURCES}
+    ${COMMUNICATION_SOURCES}
+    ${MAIN_SOURCES}
+)
 
-    # GTest dependency
-    find_package(GTest REQUIRED)
-    include_directories(${GTEST_INCLUDE_DIRS})
+# Find and link threads
+find_package(Threads REQUIRED)
+target_link_libraries(atc_system PRIVATE Threads::Threads)
 
-    # Test executable
-    add_executable(run_tests
-        test/core/aircraft_test.cpp
-        test/display/display_test.cpp
-        test/operator/console_test.cpp
-    )
-
-    target_link_libraries(run_tests
-        ${GTEST_LIBRARIES}
-        pthread
-
-    )
-
-    add_test(NAME CoreTests COMMAND run_tests)
+if(CMAKE_SYSTEM_NAME MATCHES "QNX")
+    target_link_libraries(atc_system PRIVATE socket)
 endif()

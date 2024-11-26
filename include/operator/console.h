@@ -5,12 +5,13 @@
 #include "communication/qnx_channel.h"
 #include "operator/command.h"
 #include <memory>
-#include <string>
 #include <queue>
-#include <mutex>
-#include <atomic>
+#include <vector>
+#include <string>
 #include <thread>
+#include <mutex>
 #include <condition_variable>
+#include <atomic>
 #include <chrono>
 
 namespace atc {
@@ -42,6 +43,17 @@ protected:
     void execute() override;
 
 private:
+    // Constants
+    static constexpr size_t MAX_QUEUE_SIZE = 100;
+    static constexpr int INPUT_TIMEOUT_MS = 100;
+    static constexpr int MAX_COMMAND_LENGTH = 256;
+    static constexpr size_t MAX_HISTORY_SIZE = 50;
+    static const inline std::string PROMPT = "ATC> ";
+    static const inline std::string WELCOME_MESSAGE =
+        "\n=== Air Traffic Control System Console ===\n"
+        "Type 'HELP' for available commands\n"
+        "Type 'EXIT' to quit\n";
+
     // Input handling
     void startInputThread();
     void stopInputThread();
@@ -63,8 +75,10 @@ private:
     void updatePerformanceMetrics(const std::chrono::steady_clock::time_point& start_time);
     bool shouldLogPerformance() const;
     void logPerformanceStats() const;
+    long getSystemUptime() const;
+    int getActiveAircraftCount() const;
 
-    // Internal state
+    // Data members
     std::shared_ptr<comm::QnxChannel> channel_;
     std::unique_ptr<CommandProcessor> command_processor_;
     std::queue<std::string> command_queue_;
@@ -76,18 +90,7 @@ private:
     std::condition_variable queue_cv_;
     bool echo_enabled_;
 
-    // Console configuration
-    static constexpr size_t MAX_QUEUE_SIZE = 100;
-    static constexpr int INPUT_TIMEOUT_MS = 100;
-    static constexpr int MAX_COMMAND_LENGTH = 256;
-    static const inline std::string PROMPT = "ATC> ";
-    static const inline std::string WELCOME_MESSAGE =
-        "\n=== Air Traffic Control System Console ===\n"
-        "Type 'HELP' for available commands\n"
-        "Type 'EXIT' to quit\n";
-
     // Command history
-    static constexpr size_t MAX_HISTORY_SIZE = 50;
     std::vector<std::string> command_history_;
     size_t history_index_;
 
@@ -96,11 +99,12 @@ private:
         std::chrono::steady_clock::time_point last_command_time;
         double average_processing_time_ms;
         size_t command_count;
-
         Performance() : average_processing_time_ms(0), command_count(0) {}
     } performance_;
+
+    std::chrono::steady_clock::time_point system_start_time_{std::chrono::steady_clock::now()};
 };
 
-}
+} // namespace atc
 
 #endif // ATC_OPERATOR_CONSOLE_H
