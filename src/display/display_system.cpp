@@ -118,8 +118,15 @@ void DisplaySystem::displayGrid() {
                     const char* color = getWarningColor(cell.warning_level);
                     // Add altitude indicator: H(high), M(mid), L(low)
                     char alt_indicator = 'M';
-                    if (cell.state.position.z > 21000) alt_indicator = 'H';
-                    else if (cell.state.position.z < 18000) alt_indicator = 'L';
+                    // Get aircraft state to determine altitude
+                    for (const auto& aircraft : aircraft_) {
+                        if (aircraft && aircraft->getState().callsign == cell.aircraft_id) {
+                            double altitude = aircraft->getState().position.z;
+                            if (altitude > 21000) alt_indicator = 'H';
+                            else if (altitude < 18000) alt_indicator = 'L';
+                            break;
+                        }
+                    }
                     std::cout << color << alt_indicator << cell.symbol << "\033[0m";
                 }
             } else {
