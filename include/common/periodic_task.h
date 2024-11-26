@@ -11,10 +11,6 @@
 #include <atomic>
 #include <mutex>
 #include <chrono>
-#include <thread>
-#include <atomic>
-#include <mutex>
-#include <sys/time.h>
 
 namespace atc {
 
@@ -96,9 +92,8 @@ private:
                 ts.tv_sec = ns.count() / 1000000000;
                 ts.tv_nsec = ns.count() % 1000000000;
                 
-                // Use QNX timer_timeout
-                uint64_t timeout_ns = ts.tv_sec * 1000000000ULL + ts.tv_nsec;
-                TimerTimeout(CLOCK_REALTIME, _NTO_TIMEOUT_RECEIVE, nullptr, &timeout_ns, nullptr);
+                // Use QNX delay
+                delay(ts.tv_sec * 1000 + ts.tv_nsec / 1000000);
             }
         }
     }
