@@ -6,6 +6,7 @@
 #include <time.h>
 #include <errno.h>
 #include <unistd.h>
+#include <inttypes.h>
 #include <chrono>
 #include <thread>
 #include <atomic>
@@ -89,13 +90,9 @@ private:
             auto sleep_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(sleep_time);
 
             if (sleep_ns.count() > 0) {
-                struct timespec ts;
-                ts.tv_sec = sleep_ns.count() / 1000000000;
-                ts.tv_nsec = sleep_ns.count() % 1000000000;
-                
-                // Use QNX delay() function which is more reliable than nanosleep
-                int ms = (ts.tv_sec * 1000) + (ts.tv_nsec / 1000000);
-                TimerTimeout(CLOCK_REALTIME, _NTO_TIMEOUT_RECEIVE, NULL, &ts, NULL);
+                // Convert sleep time to nanoseconds for QNX TimerTimeout
+                uint64_t timeout_ns = sleep_ns.count();
+                TimerTimeout(CLOCK_REALTIME, _NTO_TIMEOUT_RECEIVE, NULL, &timeout_ns, NULL);
             }
         }
     }
