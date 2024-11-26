@@ -2,12 +2,10 @@
 #define ATC_COMMAND_PROCESSOR_H
 
 #include "communication/message_types.h"
-#include "common/types.h"
 #include <string>
 #include <vector>
 #include <unordered_map>
 #include <functional>
-#include <optional>
 #include <memory>
 
 namespace atc {
@@ -17,41 +15,38 @@ public:
     CommandProcessor();
     ~CommandProcessor() = default;
 
-    // Command processing
     struct CommandResult {
         bool success;
         std::string message;
-        std::optional<comm::Message> response;
+        comm::Message msg;  // Changed from optional to direct Message
+        bool has_message;   // Flag to indicate if message is valid
 
-        CommandResult(bool s = false, const std::string& msg = "",
-                     std::optional<comm::Message> resp = std::nullopt)
-            : success(s), message(msg), response(resp) {}
+        CommandResult(bool s = false, const std::string& msg_str = "",
+                     const comm::Message& message = comm::Message())
+            : success(s)
+            , message(msg_str)
+            , msg(message)
+            , has_message(false) {}
     };
 
-    // Command validation and processing
+    // Command processing
     CommandResult processCommand(const std::string& command_line);
-    bool validateCommand(const std::string& command_line, std::string& error_message) const;
+    std::string getHelpText() const;
+    std::string getCommandHelp(const std::string& command) const;
 
-    // Command information
+private:
     struct CommandInfo {
         std::string syntax;
         std::string description;
         std::vector<std::string> examples;
     };
 
-    // Help information
-    std::string getHelpText() const;
-    std::string getCommandHelp(const std::string& command) const;
-
-private:
-    // Command parsing
     struct ParsedCommand {
         std::string command;
         std::string aircraft_id;
         std::vector<std::string> parameters;
     };
 
-    // Command definition
     struct CommandDefinition {
         std::function<CommandResult(CommandProcessor*, const ParsedCommand&)> handler;
         CommandInfo info;
@@ -67,38 +62,33 @@ private:
     CommandResult handleStatusCommand(const ParsedCommand& cmd);
     CommandResult handleHelpCommand(const ParsedCommand& cmd);
     CommandResult handleTrackCommand(const ParsedCommand& cmd);
+    CommandResult handleDisplayCommand(const ParsedCommand& cmd);
 
-    // Validation helpers
+    // Helper methods
+    void initializeCommandDefinitions();
+    ParsedCommand parseCommandLine(const std::string& command_line) const;
+    bool validateParameters(const ParsedCommand& cmd, size_t expected_count) const;
+    bool validateAircraftId(const std::string& id) const;
     bool validateAltitude(double altitude) const;
     bool validateSpeed(double speed) const;
     bool validateHeading(double heading) const;
-    bool validateAircraftId(const std::string& id) const;
-    bool validateParameters(const ParsedCommand& cmd, size_t expected_count) const;
 
-    // Parsing helpers
-    ParsedCommand parseCommandLine(const std::string& command_line) const;
-    std::vector<std::string> tokenizeCommand(const std::string& command_line) const;
-
-    // Initialize commands
-    void initializeCommandDefinitions();
-
-    // Command registry
     std::unordered_map<std::string, CommandDefinition> command_definitions_;
 
     // Constants
-    static constexpr int MIN_AIRCRAFT_ID_LENGTH = 3;
-    static constexpr int MAX_AIRCRAFT_ID_LENGTH = 10;
-    static constexpr char COMMENT_CHAR = '#';
-    static constexpr char PARAMETER_SEPARATOR = ' ';
+    static const int MIN_AIRCRAFT_ID_LENGTH = 3;
+    static const int MAX_AIRCRAFT_ID_LENGTH = 10;
+    static const char COMMENT_CHAR = '#';
+    static const char PARAMETER_SEPARATOR = ' ';
 
     // Error messages
-    static const inline std::string ERR_INVALID_COMMAND = "Invalid command format";
-    static const inline std::string ERR_UNKNOWN_COMMAND = "Unknown command";
-    static const inline std::string ERR_INVALID_PARAMETERS = "Invalid parameter count";
-    static const inline std::string ERR_INVALID_AIRCRAFT_ID = "Invalid aircraft identifier";
-    static const inline std::string ERR_INVALID_VALUE = "Invalid value";
+    static const std::string ERR_INVALID_COMMAND;
+    static const std::string ERR_UNKNOWN_COMMAND;
+    static const std::string ERR_INVALID_PARAMETERS;
+    static const std::string ERR_INVALID_AIRCRAFT_ID;
+    static const std::string ERR_INVALID_VALUE;
 };
 
-}
+} // namespace atc
 
 #endif // ATC_COMMAND_PROCESSOR_H
