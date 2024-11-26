@@ -10,6 +10,7 @@
 #include <thread>
 #include <atomic>
 #include <mutex>
+#include <sys/time.h>
 
 namespace atc {
 
@@ -94,7 +95,7 @@ private:
                 
                 // Use QNX delay() function which is more reliable than nanosleep
                 int ms = (ts.tv_sec * 1000) + (ts.tv_nsec / 1000000);
-                delay(ms);
+                TimerTimeout(CLOCK_REALTIME, _NTO_TIMEOUT_RECEIVE, NULL, &ts, NULL);
             }
         }
     }
