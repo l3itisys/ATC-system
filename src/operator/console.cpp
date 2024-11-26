@@ -92,28 +92,31 @@ void OperatorConsole::stopInputThread() {
 }
 
 void OperatorConsole::inputThreadFunction() {
-    struct termios term;
-    tcgetattr(STDIN_FILENO, &term);
-    term.c_lflag &= ~(ICANON | ECHO);
-    term.c_cc[VMIN] = 1;
-    term.c_cc[VTIME] = 0;
-    tcsetattr(STDIN_FILENO, TCSANOW, &term);
+    // Save original terminal settings
+    struct termios orig_termios;
+    tcgetattr(STDIN_FILENO, &orig_termios);
+    
+    // Configure terminal for raw input
+    struct termios raw = orig_termios;
+    raw.c_lflag &= ~(ICANON | ECHO);
+    raw.c_cc[VMIN] = 1;
+    raw.c_cc[VTIME] = 0;
+    tcsetattr(STDIN_FILENO, TCSANOW, &raw);
 
     std::string input_buffer;
-    char c;
+    displayPrompt();  // Show initial prompt
 
     while (input_running_) {
+        char c;
         if (read(STDIN_FILENO, &c, 1) == 1) {
             if (c == '\r' || c == '\n') {
+                std::cout << "\r\n";
                 if (!input_buffer.empty()) {
-                    std::cout << "\r\n";  // QNX needs explicit carriage return
                     enqueueCommand(input_buffer);
                     addToHistory(input_buffer);
                     input_buffer.clear();
-                    if (echo_enabled_) {
-                        displayPrompt();
-                    }
                 }
+                displayPrompt();
             }
             else if (c == 127 || c == 8) { // Backspace
                 if (!input_buffer.empty()) {
@@ -342,7 +345,7 @@ void OperatorConsole::clearScreen() const {
 }
 
 void OperatorConsole::displayPrompt() const {
-    std::cout << PROMPT << std::flush;
+    std::cout << "\r" << PROMPT << std::flush;
 }
 
 void OperatorConsole::displayWelcomeMessage() const {
