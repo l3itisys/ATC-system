@@ -2,7 +2,6 @@
 #define ATC_PERIODIC_TASK_H
 
 #include <sys/neutrino.h>
-#include <sys/syspage.h>
 #include <time.h>
 #include <errno.h>
 #include <unistd.h>
@@ -11,7 +10,6 @@
 #include <atomic>
 #include <mutex>
 #include <chrono>
-#include <sys/time.h>
 
 namespace atc {
 
@@ -88,14 +86,11 @@ private:
             auto end = std::chrono::steady_clock::now();
             auto sleep_time = start + current_period - end;
             if (sleep_time.count() > 0) {
-                struct timespec ts;
                 auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(sleep_time);
-                ts.tv_sec = ns.count() / 1000000000;
-                ts.tv_nsec = ns.count() % 1000000000;
+                uint64_t nsec = ns.count();
                 
-                // Use QNX delay
-                struct timespec sleep_ts = {ts.tv_sec, ts.tv_nsec};
-                TimerTimeout(CLOCK_REALTIME, _NTO_TIMEOUT_SEND, NULL, &sleep_ts, NULL);
+                // Use QNX delay with proper uint64_t timing
+                TimerTimeout(CLOCK_REALTIME, _NTO_TIMEOUT_SEND, NULL, &nsec, NULL);
             }
         }
     }
