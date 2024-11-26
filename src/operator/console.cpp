@@ -118,13 +118,6 @@ void OperatorConsole::inputThreadFunction() {
                         }
                     }
                 }
-            }
-            else if (std::isprint(c) && input_buffer.length() < MAX_COMMAND_LENGTH) {
-                input_buffer += c;
-                if (echo_enabled_) {
-                    std::cout << c << std::flush;
-                }
-            }
         }
     }
 }
