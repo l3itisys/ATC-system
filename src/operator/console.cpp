@@ -92,32 +92,18 @@ void OperatorConsole::stopInputThread() {
 }
 
 void OperatorConsole::inputThreadFunction() {
-    // Save original terminal settings
-    struct termios orig_termios;
-    tcgetattr(STDIN_FILENO, &orig_termios);
-    
-    // Configure terminal for raw input
-    struct termios raw = orig_termios;
-    raw.c_lflag &= ~(ICANON | ECHO);
-    raw.c_cc[VMIN] = 1;
-    raw.c_cc[VTIME] = 0;
-    tcsetattr(STDIN_FILENO, TCSANOW, &raw);
-
     std::string input_buffer;
-    displayPrompt();  // Show initial prompt
+    displayPrompt();
 
     while (input_running_) {
-        char c;
-        if (read(STDIN_FILENO, &c, 1) == 1) {
-            if (c == '\r' || c == '\n') {
-                std::cout << "\r\n";
-                if (!input_buffer.empty()) {
-                    enqueueCommand(input_buffer);
-                    addToHistory(input_buffer);
-                    input_buffer.clear();
-                }
-                displayPrompt();
+        std::string line;
+        if (std::getline(std::cin, line)) {
+            if (!line.empty()) {
+                enqueueCommand(line);
+                addToHistory(line);
             }
+            displayPrompt();
+        }
             else if (c == 127 || c == 8) { // Backspace
                 if (!input_buffer.empty()) {
                     input_buffer.pop_back();
