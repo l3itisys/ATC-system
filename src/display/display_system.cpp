@@ -113,10 +113,14 @@ void DisplaySystem::displayGrid() {
         for (const auto& cell : row) {
             if (cell.symbol != ' ') {
                 if (cell.has_conflict) {
-                    std::cout << "\033[31m" << cell.symbol << cell.symbol << "\033[0m";
+                    std::cout << "\033[31m" << "[" << cell.symbol << "]" << "\033[0m";
                 } else {
                     const char* color = getWarningColor(cell.warning_level);
-                    std::cout << color << cell.symbol << cell.symbol << "\033[0m";
+                    // Add altitude indicator: H(high), M(mid), L(low)
+                    char alt_indicator = 'M';
+                    if (cell.state.position.z > 21000) alt_indicator = 'H';
+                    else if (cell.state.position.z < 18000) alt_indicator = 'L';
+                    std::cout << color << alt_indicator << cell.symbol << "\033[0m";
                 }
             } else {
                 std::cout << "  ";
