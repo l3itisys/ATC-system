@@ -11,6 +11,7 @@
 #include <atomic>
 #include <mutex>
 #include <chrono>
+#include <sys/time.h>
 
 namespace atc {
 
@@ -93,7 +94,8 @@ private:
                 ts.tv_nsec = ns.count() % 1000000000;
                 
                 // Use QNX delay
-                delay(ts.tv_sec * 1000 + ts.tv_nsec / 1000000);
+                struct timespec sleep_ts = {ts.tv_sec, ts.tv_nsec};
+                TimerTimeout(CLOCK_REALTIME, _NTO_TIMEOUT_SEND, NULL, &sleep_ts, NULL);
             }
         }
     }
