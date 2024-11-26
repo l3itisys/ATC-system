@@ -345,3 +345,5 @@ int OperatorConsole::getActiveAircraftCount() const {
     // This should be implemented to return the actual count from your system
     return 4; // Temporary hardcoded value
 }
+
+} // namespace atc
